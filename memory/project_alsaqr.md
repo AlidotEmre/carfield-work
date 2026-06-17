@@ -95,13 +95,23 @@ Carfield SoC (AlSaqr'ın gelişmiş versiyonu, PULP ekosistemi)
 
 ---
 
-## Başlangıç Yol Haritası
+## Yol Haritası ve İlerleme
 
-- **Aşama 0** (FPGA gerekmez): Kernel module → character device `/dev/carfield` → IOCTL iskeleti
-- **Aşama 1** (~20 gün sonra): `git clone https://github.com/pulp-platform/carfield` — memory map, boot prosedürü
-- **Aşama 2**: Hello World in PULP cluster
-- **Aşama 3**: Driver entegrasyonu (Carfield memory map'ine adapte)
-- **Aşama 4**: Python arayüzü (ctypes/cffi)
+- **Aşama 0** ✅ TAMAMLANDI — `/dev/carfield`, `CARFIELD_PING` IOCTL, test geçti
+- **Aşama 1** ✅ TAMAMLANDI — Carfield repo analiz edildi, memory map ve boot prosedürü çıkarıldı
+- **Aşama 2** ✅ TAMAMLANDI — `mmap` + `CARFIELD_CLUSTER_RUN` IOCTL + `pulp_hello.c` yazıldı, derlendi
+- **Aşama 3** ⏳ SIRADA — EOC polling → interrupt, mailbox protokolü
+- **Aşama 4** ⏳ SIRADA — Python arayüzü (ctypes/cffi)
+
+## Sıradaki Oturum Başlangıç Noktası
+
+Aşama 3: `driver/carfield.c`'deki polling döngüsünü `wait_event_interruptible` + IRQ handler'a çevir.
+Giovanni/Daniele'ye önce sor: `boot_addr` değeri ve mailbox ID.
+
+## Repo
+
+GitHub: https://github.com/AlidotEmre/carfield-work
+Lokalinde: `~/carfield-work` — yeni cihazda `git clone` + symlink (README'de adımlar var)
 
 ---
 
