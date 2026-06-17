@@ -1,1 +1,0 @@
-savedcmd_/home/ubuntu/carfield-work/driver/Module.symvers :=  scripts/mod/modpost -M -m -a      -o /home/ubuntu/carfield-work/driver/Module.symvers -T /home/ubuntu/carfield-work/driver/modules.order -i Module.symvers -e 
