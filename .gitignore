@@ -10,3 +10,5 @@ driver/modules.order
 
 # Test binaries
 tests/ioctl_test
+tests/cluster_test
+tests/paging_math_test

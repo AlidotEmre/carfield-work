@@ -9,6 +9,7 @@
 #include <linux/io.h>
 #include <linux/mm.h>
 #include "carfield.h"
+#include "carfield_paging.h"
 
 #define DEVICE_NAME "carfield"
 #define CLASS_NAME  "carfield"
@@ -187,6 +188,36 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 		}
 
 		req.result = readl(int_cluster + INT_CLUSTER_RETURN_OFF);
+
+		if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+			return -EFAULT;
+		break;
+	}
+
+	/* ── Paging chain test: pin/build/release, no mailbox/FPGA ─────── */
+	case CARFIELD_PAGING_TEST: {
+		struct carfield_paging_test_req req;
+		struct carfield_paging_handle h;
+		int ret;
+
+		if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+			return -EFAULT;
+
+		ret = carfield_paging_build(req.user_addr, req.user_size,
+					     true, &h);
+		if (ret)
+			return ret;
+
+		req.dsz          = h.info.data_size;
+		req.nop          = h.info.nop;
+		req.fpo          = h.info.fpo;
+		req.fps          = h.info.fps;
+		req.lps          = h.info.lps;
+		req.header_phys  = h.header_phys;
+		req.first_page_phys = h.map[0];
+		req.last_page_phys  = h.map[h.info.nop - 1];
+
+		carfield_paging_release(&h);
 
 		if (copy_to_user((void __user *)arg, &req, sizeof(req)))
 			return -EFAULT;
