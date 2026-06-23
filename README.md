@@ -1,7 +1,7 @@
 
 # carfield-work
 
-Academic Research Assistant staj projesi — UNIBO ECS Lab, İtalya  
+Academic Research Assistant staj projesi — PoliTo Energy Center, İtalya  
 Başlangıç: 22 Haziran 2026
 
 ## Proje Özeti

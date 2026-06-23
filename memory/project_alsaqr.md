@@ -8,7 +8,7 @@ metadata:
 ---
 
 **Staj detayı:**
-- **Kurum:** UNIBO / ECS Lab, İtalya
+- **Kurum:** PoliTo Energy Center, İtalya
 - **Başlangıç:** 22 Haziran 2026
 - **Rol:** Academic Research Assistant
 - **Görev:** Carfield SoC üzerinde encrypted TinyML inference çalıştıran Linux kernel driver yazmak (%80 driver, %20 entegrasyon)

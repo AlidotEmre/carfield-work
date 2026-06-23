@@ -2,7 +2,7 @@
 
 ## Bağlam
 
-Bu repo UNIBO ECS Lab staj projesi içindir. Kullanıcı Academic Research Assistant olarak
+Bu repo PoliTo Energy Center staj projesi içindir. Kullanıcı Academic Research Assistant olarak
 Carfield SoC için Linux kernel driver yazıyor. Proje başlangıcı: 22 Haziran 2026, İtalya.
 
 ## Ekip
