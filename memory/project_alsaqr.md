@@ -100,13 +100,38 @@ Carfield SoC (AlSaqr'ın gelişmiş versiyonu, PULP ekosistemi)
 - **Aşama 0** ✅ TAMAMLANDI — `/dev/carfield`, `CARFIELD_PING` IOCTL, test geçti
 - **Aşama 1** ✅ TAMAMLANDI — Carfield repo analiz edildi, memory map ve boot prosedürü çıkarıldı
 - **Aşama 2** ✅ TAMAMLANDI — `mmap` + `CARFIELD_CLUSTER_RUN` IOCTL + `pulp_hello.c` yazıldı, derlendi
-- **Aşama 3** ⏳ SIRADA — EOC polling → interrupt, mailbox protokolü
+- **Aşama 3** ⏳ DEVAM EDİYOR — alt maddelere bölündü, durumlar aşağıda
+  - ✅ Mailbox protokolü (send/doorbell/completion/IRQ) yazıldı ve hardware-free
+    simülasyonla uçtan uca test edildi — bkz. ayrı repo
+    `mailbox-simulation-withoutFPGA` (`carfield_mbox.c/.h` + mock MMIO + simüle
+    PULP thread'i, gerçek FPGA/donanım kullanmadan)
+  - 🟡 Paging zinciri (header page + map page, pin/unpin) yazıldı — titanssl
+    referansından ported, 3 düzeltmeyle (`copy_from_user`/`copy_to_user` dönüş
+    kontrolü, `pin_user_pages_fast`/`unpin_user_pages`, `GFP_DMA32` ile 32-bit
+    adres kırpma riskinin önlenmesi). Sadece sayfa-düzeni matematiği
+    (`carfield_paging_math.c`) gerçekten test edildi (6/6 PASS, düz gcc).
+    Gerçek `pin_user_pages` yolu **henüz derlenmedi/test edilmedi** — WSL2'nin
+    kendi kernel'i (`*-microsoft-standard-WSL2`) için `linux-headers` paketi
+    yok.
+  - ⏳ EOC polling → interrupt dönüşümü — `driver/carfield.c`'deki
+    `CARFIELD_CLUSTER_RUN` içindeki busy-poll döngüsü henüz
+    `wait_event_interruptible` + IRQ handler'a çevrilmedi.
+  - ⏳ Mailbox formatı netleşmedi — bizim `carfield_mbox.h`'taki 2-letter
+    (`LETTER0/LETTER1`) format ile titanssl referansındaki 5-word ABI
+    (MAGIC/HEADER_PHYS/CMD+BITFIELD/SESSION/PID) arasında hangisinin
+    kullanılacağı netleşmedi.
+  - ⏳ Mailbox kodu (`carfield_mbox.c`) ile asıl driver (`carfield.c`) henüz
+    entegre değil — şu an iki paralel parça olarak duruyor.
 - **Aşama 4** ⏳ SIRADA — Python arayüzü (ctypes/cffi)
 
 ## Sıradaki Oturum Başlangıç Noktası
 
-Aşama 3: `driver/carfield.c`'deki polling döngüsünü `wait_event_interruptible` + IRQ handler'a çevir.
-Giovanni/Daniele'ye önce sor: `boot_addr` değeri ve mailbox ID.
+1. Giovanni/Daniele'ye sor: `boot_addr` değeri, mailbox ID, ve hangi mailbox
+   formatının (2-letter mi, titanssl'in 5-word ABI'si mi) kullanılacağı.
+2. Mailbox formatı netleşince `carfield_mbox.c`'yi `driver/carfield.c`'ye
+   entegre et, EOC polling'i `wait_event_interruptible` + IRQ handler'a çevir.
+3. Kernel build ortamını kur (WSL2-Linux-Kernel kaynağını aynı sürümle build
+   et) ve paging zincirinin gerçek `pin_user_pages` yolunu test et.
 
 ## Repo
 
