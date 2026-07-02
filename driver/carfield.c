@@ -6,6 +6,8 @@
 #include <linux/device.h>
 #include <linux/uaccess.h>
 #include <linux/wait.h>
+#include <linux/jiffies.h>
+#include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/mm.h>
 #include "carfield.h"
@@ -51,8 +53,22 @@
 
 #define INT_CLUSTER_NUM_CORES      12
 
-/* EOC polling timeout iterations */
-#define EOC_POLL_TIMEOUT           100000
+/*
+ * PULP cluster's eoc_o signal reaches the host (Cheshire) as intr_ext_i[0]
+ * ("pulpcl_eoc", level-sensitive) per the Carfield/Cheshire architecture
+ * docs. The concrete PLIC source ID that maps to on Linux is NOT known yet
+ * -- it depends on Cheshire's internal+external interrupt concatenation
+ * order, which isn't in the public docs (needs the generated hardware
+ * headers or confirmation from Daniele, same as the mailbox topology).
+ *
+ * 0 is not a valid IRQ number, so request_irq() below fails safely and
+ * non-fatally (same tolerance as the ioremap regions above) until this
+ * is filled in with the real PLIC source ID.
+ */
+#define CARFIELD_EOC_IRQ           0
+
+/* EOC wait timeout, replaces the old busy-poll iteration count */
+#define CARFIELD_EOC_TIMEOUT_MS    5000
 
 /* ── Driver state ────────────────────────────────────────────────────────── */
 struct carfield_dev {
@@ -68,6 +84,10 @@ static struct carfield_dev cdev_data;
 /* ioremap'd pointers — NULL if hardware not present */
 static void __iomem  *soc_ctrl;
 static void __iomem  *int_cluster;
+
+/* set once request_irq(CARFIELD_EOC_IRQ, ...) succeeds, so carfield_exit()
+ * knows whether there is anything to free_irq() */
+static bool eoc_irq_requested;
 
 /* ── mmap region table ───────────────────────────────────────────────────── */
 struct mmap_region {
@@ -130,6 +150,21 @@ static int carfield_mmap(struct file *file, struct vm_area_struct *vma)
 			       vma->vm_page_prot);
 }
 
+/*
+ * EOC interrupt handler: PULP cluster signals end-of-computation, wakes up
+ * whoever is blocked in the CARFIELD_CLUSTER_RUN ioctl's wait_event below.
+ * Replaces the old busy-poll of PULP_EOC_OFF.
+ */
+static irqreturn_t carfield_eoc_isr(int irq, void *dev_id)
+{
+	struct carfield_dev *cdev = dev_id;
+
+	cdev->wq_flag = 1;
+	wake_up_interruptible(&cdev->wq);
+
+	return IRQ_HANDLED;
+}
+
 static long carfield_ioctl(struct file *file, unsigned int cmd,
 			   unsigned long arg)
 {
@@ -155,7 +190,8 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 	case CARFIELD_CLUSTER_RUN: {
 		struct carfield_cluster_run req;
 		void __iomem *boot_reg;
-		int i, timeout;
+		int i;
+		long left;
 		u32 num_cores;
 
 		if (!soc_ctrl || !int_cluster) {
@@ -173,16 +209,22 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 		for (i = 0; i < num_cores; i++)
 			writel(req.boot_addr, boot_reg + i * 4);
 
+		/* Reset the flag before releasing the cluster so an EOC that
+		 * fires between here and wait_event below isn't missed. */
+		cdev_data.wq_flag = 0;
+
 		/* Release cluster: assert BOOT_ENABLE then FETCH_ENABLE */
 		writel(1, soc_ctrl + PULP_BOOT_ENABLE_OFF);
 		writel(1, soc_ctrl + PULP_FETCH_ENABLE_OFF);
 
-		/* Poll EOC — will be replaced by interrupt in Phase 3 */
-		timeout = EOC_POLL_TIMEOUT;
-		while (!readl(soc_ctrl + PULP_EOC_OFF) && --timeout)
-			cpu_relax();
-
-		if (!timeout) {
+		/* Wait for the EOC interrupt (carfield_eoc_isr) instead of
+		 * busy-polling PULP_EOC_OFF. */
+		left = wait_event_interruptible_timeout(cdev_data.wq,
+				cdev_data.wq_flag,
+				msecs_to_jiffies(CARFIELD_EOC_TIMEOUT_MS));
+		if (left < 0)
+			return left; /* interrupted by a signal */
+		if (left == 0) {
 			pr_err("carfield: cluster EOC timeout\n");
 			return -ETIMEDOUT;
 		}
@@ -284,6 +326,17 @@ static int __init carfield_init(void)
 	if (!int_cluster)
 		pr_warn("carfield: ioremap int_cluster failed (no hardware?)\n");
 
+	/* Non-fatal: CARFIELD_EOC_IRQ is a placeholder (see its definition)
+	 * until the real PLIC source ID is known, so this is expected to
+	 * fail on every setup that doesn't have that filled in yet. */
+	ret = request_irq(CARFIELD_EOC_IRQ, carfield_eoc_isr, 0,
+			   DEVICE_NAME, &cdev_data);
+	if (ret)
+		pr_warn("carfield: request_irq(%d) failed: %d (EOC IRQ not wired up yet?)\n",
+			CARFIELD_EOC_IRQ, ret);
+	else
+		eoc_irq_requested = true;
+
 	pr_info("carfield: /dev/%s ready (major=%d)\n",
 		DEVICE_NAME, MAJOR(dev_num));
 	return 0;
@@ -299,6 +352,9 @@ err_chrdev:
 
 static void __exit carfield_exit(void)
 {
+	if (eoc_irq_requested)
+		free_irq(CARFIELD_EOC_IRQ, &cdev_data);
+
 	if (soc_ctrl)
 		iounmap(soc_ctrl);
 	if (int_cluster)
