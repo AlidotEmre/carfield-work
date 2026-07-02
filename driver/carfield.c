@@ -203,6 +203,11 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 			return -EFAULT;
 
 		num_cores = req.num_cores ? req.num_cores : INT_CLUSTER_NUM_CORES;
+		if (num_cores > INT_CLUSTER_NUM_CORES) {
+			pr_err("carfield: num_cores=%u exceeds INT_CLUSTER_NUM_CORES=%d\n",
+			       num_cores, INT_CLUSTER_NUM_CORES);
+			return -EINVAL;
+		}
 
 		/* Write boot address for each core */
 		boot_reg = int_cluster + INT_CLUSTER_BOOT_ADDR_OFF;
@@ -326,16 +331,25 @@ static int __init carfield_init(void)
 	if (!int_cluster)
 		pr_warn("carfield: ioremap int_cluster failed (no hardware?)\n");
 
-	/* Non-fatal: CARFIELD_EOC_IRQ is a placeholder (see its definition)
-	 * until the real PLIC source ID is known, so this is expected to
-	 * fail on every setup that doesn't have that filled in yet. */
-	ret = request_irq(CARFIELD_EOC_IRQ, carfield_eoc_isr, 0,
-			   DEVICE_NAME, &cdev_data);
-	if (ret)
-		pr_warn("carfield: request_irq(%d) failed: %d (EOC IRQ not wired up yet?)\n",
-			CARFIELD_EOC_IRQ, ret);
-	else
-		eoc_irq_requested = true;
+	/*
+	 * CARFIELD_EOC_IRQ is a placeholder (see its definition) until the
+	 * real PLIC source ID is known. 0 reliably fails as "invalid/busy"
+	 * on the x86_64 test rig this has been validated on, but IRQ 0 is
+	 * not universally invalid across architectures -- don't risk ever
+	 * actually requesting a real line 0 on whatever the target platform
+	 * turns out to be. Skip the call entirely instead.
+	 */
+	if (CARFIELD_EOC_IRQ > 0) {
+		ret = request_irq(CARFIELD_EOC_IRQ, carfield_eoc_isr, 0,
+				   DEVICE_NAME, &cdev_data);
+		if (ret)
+			pr_warn("carfield: request_irq(%d) failed: %d (EOC IRQ not wired up yet?)\n",
+				CARFIELD_EOC_IRQ, ret);
+		else
+			eoc_irq_requested = true;
+	} else {
+		pr_warn("carfield: CARFIELD_EOC_IRQ not configured yet, skipping request_irq\n");
+	}
 
 	pr_info("carfield: /dev/%s ready (major=%d)\n",
 		DEVICE_NAME, MAJOR(dev_num));
