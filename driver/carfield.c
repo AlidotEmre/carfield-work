@@ -251,7 +251,7 @@ static int __init carfield_init(void)
 		return ret;
 	}
 
-	carfield_class = class_create(CLASS_NAME);
+	carfield_class = class_create(THIS_MODULE, CLASS_NAME);
 	if (IS_ERR(carfield_class)) {
 		ret = PTR_ERR(carfield_class);
 		goto err_chrdev;

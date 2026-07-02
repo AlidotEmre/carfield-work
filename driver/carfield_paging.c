@@ -82,9 +82,9 @@ int carfield_paging_build(unsigned long user_addr, unsigned long user_size,
 	out->map    = kmap(out->map_page);
 
 	for (i = 0; i < out->info.nop; i++)
-		out->map[i] = (u32)page_to_phys(out->data_pages[i]);
+		out->map[i] = (u32)PFN_PHYS(page_to_pfn(out->data_pages[i]));
 
-	out->header_phys = page_to_phys(out->header_page);
+	out->header_phys = (u32)PFN_PHYS(page_to_pfn(out->header_page));
 
 	out->header->magic = CARFIELD_PAGING_MAGIC;
 	out->header->dsz   = out->info.data_size;
@@ -92,7 +92,7 @@ int carfield_paging_build(unsigned long user_addr, unsigned long user_size,
 	out->header->fpo   = out->info.fpo;
 	out->header->fps   = out->info.fps;
 	out->header->lps   = out->info.lps;
-	out->header->map   = (u32)page_to_phys(out->map_page);
+	out->header->map   = (u32)PFN_PHYS(page_to_pfn(out->map_page));
 
 	return 0;
 
