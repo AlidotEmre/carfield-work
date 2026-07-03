@@ -30,6 +30,7 @@ int main(int argc, char *argv[])
 	struct stat st;
 	void *bin_buf;
 	struct carfield_cluster_run req;
+	int rc = 1; /* default to failure; only cleared on confirmed PASS */
 
 	if (argc != 2) {
 		fprintf(stderr, "usage: %s <binary.bin>\n", argv[0]);
@@ -65,7 +66,17 @@ int main(int argc, char *argv[])
 		goto out_unmap;
 	}
 	bin_buf = malloc(st.st_size);
-	read(bin_fd, bin_buf, st.st_size);
+	if (!bin_buf) {
+		perror("malloc");
+		close(bin_fd);
+		goto out_unmap;
+	}
+	if (read(bin_fd, bin_buf, st.st_size) != st.st_size) {
+		perror("read binary");
+		free(bin_buf);
+		close(bin_fd);
+		goto out_unmap;
+	}
 	close(bin_fd);
 
 	/* Copy binary to L2 */
@@ -84,13 +95,15 @@ int main(int argc, char *argv[])
 	}
 
 	printf("Cluster finished. Return value: %u\n", req.result);
-	if (req.result == 0)
+	if (req.result == 0) {
 		printf("PASS\n");
-	else
+		rc = 0;
+	} else {
 		printf("FAIL (non-zero return)\n");
+	}
 
 out_unmap:
 	munmap(l2, L2_SIZE);
 	close(fd);
-	return (int)req.result;
+	return rc;
 }
