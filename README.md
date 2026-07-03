@@ -76,12 +76,19 @@ cd ~/carfield-work && git pull
 
 ```
 carfield-work/
-├── README.md          ← bu dosya
-├── CLAUDE.md          ← Claude direktifleri
-├── memory/            ← Claude hafıza dosyaları (otomatik yüklenir)
+├── README.md               ← bu dosya
+├── CLAUDE.md               ← Claude direktifleri
+├── QUESTIONS_FOR_DANIELE.md ← toplantı gündemi (yer tutucu/varsayım listesi)
+├── memory/                 ← Claude hafıza dosyaları (otomatik yüklenir)
 │   ├── MEMORY.md
 │   └── project_alsaqr.md
-└── driver/            ← yazdığın kernel driver kodu (Aşama 0'dan itibaren)
+├── driver/                 ← kernel driver kodu (Aşama 0'dan itibaren)
+│   ├── carfield.c/.h           ← /dev/carfield, IOCTL'ler, mmap, EOC IRQ
+│   ├── carfield_paging.c/.h    ← header/map page zinciri, pin/unpin
+│   └── carfield_paging_math.c  ← sayfa-düzeni matematiği (kernel'siz derlenir)
+├── sw/                     ← PULP tarafı test kodu (pulp_hello.c)
+└── tests/                  ← userspace testler (ioctl_test, cluster_test,
+                                paging_math_test, paging_ioctl_test)
 ```
 
 ---

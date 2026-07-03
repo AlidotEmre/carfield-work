@@ -31,8 +31,11 @@ Carfield SoC için Linux kernel driver yazıyor. Proje başlangıcı: 22 Haziran
 
 1. Mailbox'a yazmadan önce `fence.i` — cache flush zorunlu
 2. Mailbox'a yazılan her adres `page_to_phys()` ile çevrilmeli — sanal adres donanımda çalışmaz
-3. OpenTitan 32-bit adres alanında — `phys_addr & 0xFFFFFFFF`
-4. User belleği pin'lenmeli — `get_user_pages()` ile
+3. OpenTitan 32-bit adres alanında — adres 4GB'ı aşıyorsa maskeleme değil, hata
+   döndür (bkz. `carfield_paging.c`, `-ERANGE`); header/map gibi kernel
+   tahsisleri `GFP_DMA32` ile yapılır, `& 0xFFFFFFFF` ile sessiz kırpma YOK
+4. User belleği pin'lenmeli — `pin_user_pages_fast()` ile (`get_user_pages()`
+   değil; `unpin_user_pages()` ile eşleşir)
 
 ## Referans Dosyalar
 

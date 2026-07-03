@@ -386,4 +386,4 @@ module_exit(carfield_exit);
 
 MODULE_AUTHOR("AlidotEmre");
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Carfield SoC kernel driver - Phase 2");
+MODULE_DESCRIPTION("Carfield SoC kernel driver - Phase 3 (paging chain)");
