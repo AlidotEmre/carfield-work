@@ -38,9 +38,23 @@ struct carfield_mbox_header {
 	__u32 fps;
 	__u32 lps;
 	__u32 map;
+
+	/*
+	 * Appended after the ratified MOCK_OT_SPEC.md §3 layout (offsets
+	 * 0x00-0x18) without disturbing any of those offsets -- room for the
+	 * contract to grow without an ABI break. version lets a future
+	 * consumer tell old headers from new ones; reserved is plain padding
+	 * for whatever shows up next (session/PID multiplexing fields are
+	 * the leading candidate, see TITANSSL_ANALYSIS.md §5 RESERVE). No
+	 * consumer is required to look at these yet -- see the mock's
+	 * carfield_mock_ot_process() for where they're read and ignored.
+	 */
+	__u32 version;
+	__u32 reserved[2];
 } __attribute__((__packed__));
 
 #define CARFIELD_PAGING_MAGIC 0xCA4F1E1D
+#define CARFIELD_PAGING_HEADER_VERSION 1
 
 /*
  * Page-layout math for a [data_addr, data_addr + data_size) user range.

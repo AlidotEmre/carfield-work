@@ -12,6 +12,7 @@
 #include <linux/mm.h>
 #include "carfield.h"
 #include "carfield_paging.h"
+#include "carfield_mock_ot.h"
 
 #define DEVICE_NAME "carfield"
 #define CLASS_NAME  "carfield"
@@ -69,6 +70,11 @@
 
 /* EOC wait timeout, replaces the old busy-poll iteration count */
 #define CARFIELD_EOC_TIMEOUT_MS    5000
+
+/* How long CARFIELD_MOCK_OT_XFORM waits for the mock kthread's reply --
+ * comfortably longer than any reasonable mock_delay_ms test value, so a
+ * real -ETIMEDOUT only happens for mock_no_reply (or a wedged mock). */
+#define CARFIELD_MOCK_OT_TIMEOUT_MS 2000
 
 /* ── Driver state ────────────────────────────────────────────────────────── */
 struct carfield_dev {
@@ -271,6 +277,49 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 		break;
 	}
 
+	/* ── Mock OpenTitan consumer (MOCK_OT_SPEC.md) ──────────────────── */
+	case CARFIELD_MOCK_OT_XFORM: {
+		struct carfield_mock_ot_req req;
+		struct carfield_paging_handle h;
+		u32 letter0, letter1;
+		int ret;
+
+		if (!carfield_mock_ot_enabled())
+			return -ENODEV;
+
+		if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+			return -EFAULT;
+
+		ret = carfield_paging_build(req.user_addr, req.user_size,
+					     true, &h);
+		if (ret)
+			return ret;
+
+		carfield_mock_ot_send(h.header_phys, CARFIELD_MOCK_OT_CMD_XFORM);
+
+		ret = carfield_mock_ot_wait_completion(CARFIELD_MOCK_OT_TIMEOUT_MS);
+		if (ret) {
+			/* mock_no_reply, or a signal -- release pages either
+			 * way so this never leaks, then report the failure. */
+			carfield_paging_release(&h);
+			req.mock_status = CARFIELD_MOCK_OT_STATUS_NONE;
+			if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+				return -EFAULT;
+			return ret;
+		}
+
+		carfield_mock_ot_read_reply(&letter0, &letter1);
+		(void)letter0; /* echoed header_phys, nothing to cross-check
+				* it against here -- h is about to be released */
+		carfield_paging_release(&h);
+
+		req.mock_status = letter1;
+		if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+			return -EFAULT;
+
+		return carfield_mock_ot_status_to_errno(letter1);
+	}
+
 	default:
 		return -ENOTTY;
 	}
@@ -351,6 +400,10 @@ static int __init carfield_init(void)
 		pr_warn("carfield: CARFIELD_EOC_IRQ not configured yet, skipping request_irq\n");
 	}
 
+	ret = carfield_mock_ot_start();
+	if (ret)
+		pr_warn("carfield: carfield_mock_ot_start failed: %d\n", ret);
+
 	pr_info("carfield: /dev/%s ready (major=%d)\n",
 		DEVICE_NAME, MAJOR(dev_num));
 	return 0;
@@ -366,6 +419,8 @@ err_chrdev:
 
 static void __exit carfield_exit(void)
 {
+	carfield_mock_ot_stop();
+
 	if (eoc_irq_requested)
 		free_irq(CARFIELD_EOC_IRQ, &cdev_data);
 

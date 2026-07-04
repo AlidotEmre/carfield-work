@@ -13,6 +13,7 @@ tests/ioctl_test
 tests/cluster_test
 tests/paging_math_test
 tests/paging_ioctl_test
+tests/mock_ot_test
 
 # IDE project files
 .idea/

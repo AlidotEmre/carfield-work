@@ -132,6 +132,9 @@ int carfield_paging_build(unsigned long user_addr, unsigned long user_size,
 	out->header->fps   = out->info.fps;
 	out->header->lps   = out->info.lps;
 	out->header->map   = (u32)PFN_PHYS(page_to_pfn(out->map_page));
+	out->header->version     = CARFIELD_PAGING_HEADER_VERSION;
+	out->header->reserved[0] = 0;
+	out->header->reserved[1] = 0;
 
 	return 0;
 
