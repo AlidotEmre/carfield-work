@@ -45,10 +45,18 @@ driver tarafında henüz hiç başlanmadı.
 
 Header/map/data sayfaları CVA6'nın cache'i üzerinden yazılıyor;
 OpenTitan/PULP bunları doğrudan RAM'den okuyacak. İnterconnect coherent
-değilse doorbell'dan önce bir cache flush (fence.i benzeri) gerekiyor —
-CLAUDE.md'deki "her zaman fence.i" kuralı muhtemelen bunun için ama hangi
-API/instruction'ın (ve tam olarak hangi bellek bölgelerinin) gerektiği
-netleşmedi.
+değilse doorbell'dan önce gerçek bir veri-belleği fence'i/cache-management
+operasyonu gerekiyor.
+
+**Güncelleme (TITANSSL_ANALYSIS.md §3 incelemesinden):** CLAUDE.md'nin eski
+"her zaman `fence.i`" kuralı düzeltildi — `fence.i` RISC-V'de yalnızca
+instruction-cache/self-modifying-code senkronizasyonu yapar, veri belleği
+barrier'ı DEĞİLDİR. titanssl referansı (`driver.c:379`) bunu "Clean cache!"
+yorumuyla doorbell'dan önce çağırıyor ama bu muhtemelen bir yanlış anlamaydı,
+bağımsız doğrulanmış bir gereksinim değil. Yani soru hâlâ açık, sadece daha
+keskin: CVA6↔mailbox yolu gerçekten coherent mi (o zaman hiçbir barrier
+gerekmiyor), yoksa gerçekten bir veri fence'i/CMO mu gerekiyor (o zaman
+hangisi, hangi bellek bölgeleri için)?
 
 - Bu, "simülasyonda/VM'de PASS ama gerçek FPGA'da çöp okunuyor"
   senaryolarının klasik nedeni — netleşmeden kodda spekülatif flush
@@ -66,6 +74,25 @@ olur, şimdiden haber vermek için sorulmalı.
 
 Daniele "you can assume" demişti, DOĞRULANMIŞ sayılıyor ama toplantıda
 canlı olarak tekrar kontrol edilecek (Daniele'nin kendi önerisi).
+
+## 7. Tek in-place buffer mi, yoksa titanssl'deki gibi ayrı input/output/meta mı?
+
+Mock OpenTitan (bkz. `MOCK_OT_SPEC.md`) şimdilik tek bir buffer'ı yerinde
+(in-place) XOR'luyor — gönderilen adres hem giriş hem çıkış. titanssl
+(`titanssl_driver/titanssl.h:82-104`) bunun yerine üç ayrı buffer taşıyor:
+input/output/meta, her biri kendi `dsz/nop/fpo/fps/lps/map` geometrisiyle —
+çünkü input ve output BOYUTLARI farklı olabiliyor (ör. padding'li
+encrypt/decrypt).
+
+- Python akışımız da encrypted bir blob gönderip **farklı boyutta** bir
+  sonuç bekleyecek gibi görünüyor (bkz. TITANSSL_ANALYSIS.md §5
+  RECOMMENDATIONS, "RESERVE" maddesi) — bu doğruysa in-place tek buffer
+  modeli gerçek kriptografik komutlarda yeterli olmayacak.
+- Soru: gerçek OpenTitan komutları (decrypt/encrypt/key işlemleri) hep
+  boyut-koruyan mı olacak, yoksa titanssl'deki gibi input≠output boyutu
+  olan komutlar da olacak mı? İkincisiyse, mailbox'ın 2-letter formatını
+  (tek `header_phys`) mi genişletmemiz gerekiyor, yoksa titanssl'in
+  input/output/meta üçlü-header modelini mi benimsemeliyiz?
 
 ---
 

@@ -160,7 +160,12 @@ teyitli değil.
 
 ## Kritik Teknik Notlar
 
-1. **`fence.i` zorunlu** — Cache flush yapılmazsa donanım eski veriyi okur
+1. **`fence.i` bir veri-belleği barrier'ı DEĞİL** — RISC-V'de sadece
+   icache/self-modifying-code senkronizasyonu yapar. Önceki "cache flush
+   zorunlu" ifadesi titanssl'den (muhtemelen yanlış anlaşılmış) miras
+   kalmıştı, düzeltildi (bkz. TITANSSL_ANALYSIS.md §3). CVA6↔mailbox
+   coherence + gerçek bir data fence/CMO gerekip gerekmediği açık soru
+   (bkz. `CLAUDE.md` madde 1, `QUESTIONS_FOR_DANIELE.md` madde 4).
 2. **Fiziksel adres zorunlu** — Mailbox'a `page_to_phys()` ile çevrilmiş adres yazılmalı
 3. **32-bit adres kısıtı** — OpenTitan 32-bit adres alanında çalışıyor
 4. **Multi-page indirection** — Sanal adreste ardışık bellek fiziksel olarak dağınık olabilir; header page + map page yapısı ile çözülüyor

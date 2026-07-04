@@ -36,6 +36,8 @@ Header page: one 4 KB page, physically below 4 GB, containing little-endian `u32
 | 0x14 | `lps`   | payload bytes in the last page |
 | 0x18 | `map`   | 32-bit phys addr of the map page |
 
+**Post-implementation addendum:** the header struct gained a trailing `version` (0x1C) + `reserved[2]` (0x20, 0x24) as of the actual implementation — offsets 0x00-0x18 above are unchanged, this is pure growing room (candidate use: session/PID multiplexing if that's ever needed, see `TITANSSL_ANALYSIS.md` §5 RESERVE). The mock reads and deliberately ignores these fields today; no §5 rule covers them yet.
+
 Map page: one 4 KB page, physically below 4 GB, holding `nop` consecutive `u32` **physical page addresses** in payload order. Payload layout: bytes `[fpo, fpo+fps)` of page 0, then full pages 1..nop-2, then bytes `[0, lps)` of page nop-1. `PAGE_SIZE = 4096`.
 
 Doorbell: `letter0 = header_phys`, `letter1 = command` (define `CMD_XFORM = 0x0001` for now). Reply: `letter1 = status` (0 = OK, else error code from §5), `letter0` echoed.

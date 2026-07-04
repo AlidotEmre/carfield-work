@@ -29,7 +29,17 @@ Carfield SoC için Linux kernel driver yazıyor. Proje başlangıcı: 22 Haziran
 
 ## Kritik Teknik Kurallar (Unutturma)
 
-1. Mailbox'a yazmadan önce `fence.i` — cache flush zorunlu
+1. **`fence.i` cache flush YAPMAZ — bu kural yanlıştı, düzeltildi.** RISC-V'de
+   `fence.i` instruction-cache/self-modifying-code senkronizasyonu içindir,
+   veri belleği (data memory) barrier'ı değil. titanssl referansı
+   (`titanssl_driver/driver.c:379`) doorbell'dan önce bunu "Clean cache!"
+   yorumuyla çağırıyor ama bu muhtemelen bir yanlış anlamaydı — bağımsız
+   doğrulanmış bir gereksinim değil (bkz. TITANSSL_ANALYSIS.md §3).
+   CVA6↔mailbox yolunun gerçekten cache-coherent olup olmadığı ve
+   doorbell'dan önce gerçek bir veri fence'i/CMO gerekip gerekmediği AÇIK
+   SORU — Daniele toplantısını bekliyor (bkz. `QUESTIONS_FOR_DANIELE.md`
+   madde 4). Netleşene kadar yeni kodda `fence.i`'yi (ya da başka bir
+   barrier'ı) "zaten böyle yapılıyor" diye körü körüne ekleme.
 2. Mailbox'a yazılan her adres `page_to_phys()` ile çevrilmeli — sanal adres donanımda çalışmaz
 3. OpenTitan 32-bit adres alanında — adres 4GB'ı aşıyorsa maskeleme değil, hata
    döndür (bkz. `carfield_paging.c`, `-ERANGE`); header/map gibi kernel
