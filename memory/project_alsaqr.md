@@ -220,7 +220,47 @@ teyitli değil.
     kernel/ioremap kullanıyor, diğeri mock MMIO + userspace pthread).
   - 🆕 PULP'a komuta mailbox yok, Event Unit (EU) kullanılacak — henüz
     başlanmadı, Daniele toplantıda gösterecek.
+  - ✅ Mock OpenTitan consumer (kthread tabanlı, `MOCK_OT_SPEC.md`) yazıldı
+    ve **gerçek kernelde (carfield-VM) uçtan uca doğrulandı** (2026-07-06)
+    — bkz. aşağıdaki "Mock OpenTitan Consumer — Gerçek Kernel Testi" bölümü.
 - **Aşama 4** ⏳ SIRADA — Python arayüzü (ctypes/cffi)
+
+## Mock OpenTitan Consumer — Gerçek Kernel Testi (2026-07-06)
+
+`driver/carfield_mock_ot.c/.h` (commit `e78c50b`, spec: `MOCK_OT_SPEC.md`) — kthread
+tabanlı bir mock OpenTitan consumer, paging zincirinin ilk gerçek "tüketicisi". carfield-VM
+üzerinde (`git pull` → HEAD `9b89aa5`) derlendi, `insmod carfield-mod.ko mock_ot=1` ile
+yüklendi ve `tests/mock_ot_test` ile MOCK_OT_SPEC.md §7'nin tüm senaryoları çalıştırıldı:
+
+- 3 tekrar × 4 case (single-page, page-straddling, large-malloc-scattered,
+  mmap-aligned-fpo0) → hepsi PASS
+- `mock_no_reply=1` → ioctl `-ETIMEDOUT` (~2025 ms), sayfa sızıntısı yok
+- `mock_corrupt_magic=1` → `ERR_MAGIC` → `-EILSEQ`, tek §5 red senaryosu doğrulandı
+- `mock_bad_xform=1` → yanlış anahtarla transform, doğru-anahtar karşılaştırması FAIL
+  verdi (testin vacuous olmadığının kanıtı)
+- `rmmod` sonrası `dmesg`'de Bad-page/BUG/leak uyarısı yok — sadece bilinen/zararsız
+  `ioremap soc_ctrl/int_cluster failed (no hardware?)` (yükleme anında, donanımsız VM)
+
+**§8 tablosu — bu testin neyi kanıtladığı / kanıtlamadığı** (`MOCK_OT_SPEC.md`'den,
+sonuçla birlikte):
+
+| Kanıtlanan (yazılım, gerçek kernel) | Kanıtlanmayan (sadece FPGA'da) |
+|---|---|
+| Header/map'teki fiziksel adresler bağımsız olarak çözülebilir ve okunabilir | OT'nin interconnect'i bu DDR adreslerine erişebilir / adres-görünümü çevirisi |
+| Fiziksel adres üzerinden yazma, pinlenmiş user buffer'a ulaşıyor (`FOLL_WRITE`) | CVA6↔OT cache coherence (doorbell öncesi flush sorusu, hâlâ açık) |
+| `fpo/fps/lps` geometrisi uçtan uca doğru işleniyor | Gerçek mailbox register semantiği (doorbell/completion kablolaması, IRQ 58 vb.) |
+| Timeout, hata, release/unpin yolları canlı bir tüketici altında çalışıyor | 32-bit'in gerçek Carfield RAM'ine sığması; gerçek OT firmware davranışı/performansı |
+
+**Rapor ederken ifade:** "ratified kontratı uygulayan bir yazılım mock'una karşı uçtan
+uca doğrulandı" — asla sadece "doğrulandı" denmemeli (spec'in kendi uyarısı).
+
+**Why:** `MOCK_OT_SPEC.md` §9 Definition of Done'ın kod/test tarafındaki tüm maddeleri
+bununla kapandı; sadece bu belgeleme maddesi açıktı, şimdi o da kapandı.
+
+**How to apply:** Mock OT'yi tekrar "test edilmedi" diye sunma. Bu, gerçek mailbox
+donanımının yerini TUTMUYOR — mailbox entegrasyonu (`carfield_mbox.c` → `carfield.c`)
+hâlâ yapılmadı ve Daniele toplantısından gelecek gerçek IRQ/PLIC numaraları ile
+`INT_SND_EN` yön bilgisini bekliyor (bkz. `QUESTIONS_FOR_DANIELE.md` madde 1-2).
 
 ## Sıradaki Oturum Başlangıç Noktası
 
