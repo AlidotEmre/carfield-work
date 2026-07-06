@@ -88,6 +88,11 @@ Carfield SoC (AlSaqr'ın gelişmiş versiyonu, PULP ekosistemi)
 
 ## Mailbox Topolojisi — Daniele'nin yanıtı (2026-06, mail) — KRİTİK GÜNCELLEME
 
+**2026-07-06 NOT:** Bu bölümdeki bazı bilgiler (özellikle "sadece `INT_SND_SET`
+aktif" ve "PULP'a mailbox yok") 2026-07-06'da gelen yeni mail + gerçek `mbox.h`
+koduyla ÇELİŞİYOR — bkz. aşağıdaki "Daniele'den Yeni Mail + Gerçek mbox.h Kodu"
+bölümü. Bu bölümü tek başına güncel/kesin kabul etme.
+
 FPGA bitstream'de 3 aktif mailbox var (unit'te daha fazlası var ama interrupt hattına
 bağlı değiller, kullanılmayacak). **Sadece `INT_SND_SET` aktif** — `INT_RCV_SET`'i
 unut, mimari sadeleştirilmiş.
@@ -262,21 +267,96 @@ donanımının yerini TUTMUYOR — mailbox entegrasyonu (`carfield_mbox.c` → `
 hâlâ yapılmadı ve Daniele toplantısından gelecek gerçek IRQ/PLIC numaraları ile
 `INT_SND_EN` yön bilgisini bekliyor (bkz. `QUESTIONS_FOR_DANIELE.md` madde 1-2).
 
+## Daniele'den Yeni Mail + Gerçek mbox.h Kodu (2026-07-06) — ÖNEMLİ ÇELİŞKİLER, DİKKATLİ OL
+
+Kullanıcının 3 Temmuz 2026 mailine (paging zinciri VM'de doğrulandı bilgisi + header
+struct + cache coherence + mock-OT soruları) Daniele'den bir yanıt geldi, **artı**
+Daniele bu sefer gerçek bir kod dosyası (`mbox.h`, muhtemelen OT ROM/firmware tarafı —
+`#include "sw/device/silicon_creator/rom/string_lib.h"` yolu OpenTitan'ın kendi repo
+düzenini kullanıyor) paylaştı. Bu, önceki (2026-06) mail bilgisiyle **doğrudan çelişen**
+noktalar içeriyor — kod tarafında HENÜZ HİÇBİR ŞEY DEĞİŞTİRİLMEDİ, kullanıcı önce
+Daniele ile netleştirecek.
+
+**mbox.h register haritası (gerçek, somut offsetler):**
+```
+CAR_MBOX_BASE_ADDR = 0x40000000, her mailbox id için +(id*0x100):
+  +0x00 INT_SND_STAT   +0x40 INT_RCV_STAT
+  +0x04 INT_SND_SET    +0x44 INT_RCV_SET
+  +0x08 INT_SND_CLR    +0x48 INT_RCV_CLR
+  +0x0C INT_SND_EN     +0x4C INT_RCV_EN
+  +0x80 LETTER0        +0x84 LETTER1
+```
+(Önceki "LETTER0=0x80, LETTER1=0x8C şüphesi" notu YANLIŞMIŞ — gerçek LETTER1=0x84.)
+
+**ÇELİŞKİ 1 — doorbell register'ı:** mbox.h'deki AKTİF (yorumsuz) `mailbox_send()`
+doorbell olarak **`INT_RCV_SET`** yazıyor (`INT_SND_SET` + `INT_SND_EN` kullanan eski
+versiyon kodda yorum satırına alınmış, yazan kişi "I feel like it does not respect the
+documentation" notu düşmüş). Bu, 2026-06 mailindeki "sadece `INT_SND_SET` aktif,
+`INT_RCV_SET`'i unut" bilgisinin **tam tersi**. `carfield_mbox.c` reworku (commit
+`a28ad6d`, bkz. yukarı) o Haziran bilgisine göre yazıldı — yani şu an muhtemelen yanlış
+register'ı tetikliyor olabilir. **Netleşmeden dokunma.**
+
+**ÇELİŞKİ 2 — çıktının gerçek hedefi, Mock OT'nin temel varsayımını kırıyor:** Yeni
+mailde Daniele, OT'nin (addr_src, addr_dst, size) ile DMA yapacağını ve
+`addr_dst=0x78000000` (**PULP cluster L2 base**) olacağını yazdı — yani OT girdiyi
+host'un pinlenmiş buffer'ından okuyor ama **çıktıyı host'a değil doğrudan PULP L2'ye
+yazıyor**. `MOCK_OT_SPEC.md`/`carfield_mock_ot.c`'nin bütün modeli (in-place XOR,
+"write-back into the pinned user buffer" §8 kanıtı) bu gerçek veri akışını temsil
+ETMİYOR. Mock hâlâ değerli (pin/build/release zincirini doğrulaması bakımından) ama
+gerçek OT davranışının bir benzetmesi değil — bu ayrım rapor edilirken vurgulanmalı.
+İyi haber: Daniele'nin tarif ettiği transfer şekli (ilk sayfa kısmi, orta sayfalar tam,
+son sayfa kısmi — `fpo/fps/lps/nop` ile) bizim header geometrimizle bire bir örtüşüyor,
+sadece hedef adres modeli farklı.
+
+**ÇELİŞKİ 3 — PULP'un mailbox'ı var mı yok mu:** mbox.h'de açıkça
+`HOST_TO_CLUSTER_MBOX=6` ve `CLUSTER_TO_HOST_MBOX=2` (yorumda `//15` alternatifi de
+var) tanımlı — yani host↔PULP arası bir mailbox yolu görünüyor. 2026-06 mailinde ise
+"PULP'a komuta mailbox YOK, Event Unit üzerinden olacak" denmişti. İki bilgi de
+Daniele'den ama birbiriyle çelişiyor.
+
+**Daniele'nin olası yanlış anlaması:** Mailinde "Index of the starting page in the
+page map; (is it the magic number?)" diye soruyor — bizim header'ımızdaki `magic`
+alanı sabit bir sanity-check değeri (`0xCA4F1E1D`), bir sayfa index'i DEĞİL. Netleşmezse
+OT firmware'i muhtemelen yanlış alanı index sanabilir. (Kullanıcı bunu kendi
+halledecek.)
+
+**Çözülen sorular:**
+- `INT_SND_EN` sahipliği (eski madde 1) → **"Currently INT_SND_EN can be written by
+  all domains."** Sabit bir taraf yok, herkes yazabiliyor.
+- Cache coherence (eski madde 4, `fence.i` tartışması) → somut cevap: L3'te header
+  tutarsan flush şart; Daniele L2 belleği (0x78 civarı) öneriyor, OT için L3'ü hiç
+  kullanmamış, struct okunduktan sonra o L2 bölgesi üzerine yazılabilir (transient).
+  Bu, şu anki "keyfi host userspace sayfasını pinle" yaklaşımının (muhtemelen
+  L3/cacheable RAM) revize edilmesi gerekebileceği anlamına geliyor — henüz KARAR
+  YOK, sadece somut bir veri noktası.
+- Mock'un gerekliliği doğrulandı: Daniele "FPGA'dan başka mock bilmiyorum" dedi.
+
+**Why:** Bu iki kaynak (yeni mail + gerçek kod), önceki "netleşti" sayılan bazı
+maddeleri (mailbox topolojisi, SND/RCV, PULP mailbox var mı) yeniden açıyor. Projenin
+gidişatı bu netleşmeye göre değişebilir.
+
+**How to apply:** Yukarıdaki 3 çelişkiyi "çözüldü" gibi sunma, hâlâ AÇIK — kullanıcı
+Daniele ile kendi netleştirecek. Netleşene kadar `carfield_mbox.c`/`carfield.c`'de
+SND/RCV veya buffer-model varsayımına dayanan hiçbir kod değişikliği önerme/yapma.
+
 ## Sıradaki Oturum Başlangıç Noktası
 
-1. Daniele ile toplantı (önümüzdeki hafta Pazartesi veya Cuma 15:00, tarih
-   teyitli değil) — EN/STAT sahipliğinin outbound mu inbound mu tarafta
-   olduğunu doğrula (hem mailbox `INT_SND_EN` hem de EOC `CARFIELD_EOC_IRQ`
-   için gerçek PLIC source ID), EU'yu canlı gör, register low-level
-   API'lerini al.
-2. ~~carfield_mbox.c rework~~ ✅ bitti (commit `a28ad6d`, bkz. yukarı).
+1. Daniele ile toplantı/mail — yukarıdaki 3 çelişkiyi (SND/RCV, çıktı hedefi,
+   PULP mailbox var mı) ve `magic` alanı yanlış anlamasını netleştir; EOC
+   `CARFIELD_EOC_IRQ` için gerçek PLIC source ID hâlâ bekleniyor. (Kullanıcı bu
+   turu kendi yürütüyor.)
+2. ~~carfield_mbox.c rework~~ ✅ bitti (commit `a28ad6d`, bkz. yukarı) — AMA yukarıdaki
+   Çelişki 1 nedeniyle muhtemelen yanlış register kullanıyor, netleşmeden dokunma.
 3. ~~mock_mmio/pulp_sim güncellemesi~~ ✅ bitti (`opentitan_sim.c` +
    rework edilmiş `pulp_sim.c`, bkz. yukarı).
 4. `carfield_mbox.c`'yi (mock MMIO + userspace pthread) `driver/carfield.c`'ye
    (gerçek kernel/ioremap) entegre et — bu, mbox 1/5/7 için de gerçek IRQ
-   numaraları gerektirecek, henüz yok (madde 1'i bekliyor).
+   numaraları gerektirecek, henüz yok (madde 1'i bekliyor). Ayrıca artık çıktının
+   host'a değil PULP L2'ye gidebileceği modelini de hesaba katmalı.
 5. PULP Event Unit (EU) — henüz başlanmadı; `hal/eu/eu_v3.h` (pulp-sdk,
    cluster-side HAL) referans olabilir ama host-side entegrasyon ayrı iş.
+   `HOST_TO_CLUSTER_MBOX`/`CLUSTER_TO_HOST_MBOX` çelişkisi netleşince EU'nun hâlâ
+   gerekli olup olmadığı da netleşecek.
 
 ## Repo
 
