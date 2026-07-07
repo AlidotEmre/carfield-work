@@ -74,9 +74,15 @@ int carfield_paging_build(unsigned long user_addr, unsigned long user_size,
 	 * A transfer whose nop exceeds that capacity would write past the
 	 * mapped page into whatever kernel memory follows it. Reject rather
 	 * than corrupt.
+	 *
+	 * -E2BIG (not -EINVAL): this is a well-formed request that is simply
+	 * too large for the current single-page map, distinct from the
+	 * malformed-request case above (zero size / address overflow).
+	 * Callers (e.g. the Python interface layer's abi.py) map the two
+	 * separately -- CarfieldSizeError vs CarfieldBadRequest.
 	 */
 	if (out->info.nop > PAGE_SIZE / sizeof(u32))
-		return -EINVAL;
+		return -E2BIG;
 
 	ret = -ENOMEM;
 
