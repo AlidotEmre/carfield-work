@@ -17,3 +17,8 @@ tests/mock_ot_test
 
 # IDE project files
 .idea/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
