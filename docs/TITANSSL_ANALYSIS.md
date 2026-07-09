@@ -212,13 +212,13 @@ an independently verified requirement.** This does not block the mock (which
 runs entirely in-process, no real cache/interconnect involved) but it is a
 live correctness question for the real-hardware phase and belongs in the
 Daniele meeting alongside the mailbox topology and EU questions already
-queued in `QUESTIONS_FOR_DANIELE.md`.
+queued in `docs/QUESTIONS_FOR_TEAM.md`.
 
 No barrier of any kind was found on the OT-firmware side between writing
 output data (`utils_dram_writepage`) and triggering completion
 (`utils_irq_trig_comp`) — consistent with the open "cache coherence CVA6↔OT"
 question already tracked in this project's own memory
-(`project_alsaqr.md` "Kritik Teknik Notlar" #1, `QUESTIONS_FOR_DANIELE.md` §4).
+(`project_alsaqr.md` "Kritik Teknik Notlar" #1, `docs/QUESTIONS_FOR_TEAM.md` §4).
 
 ---
 

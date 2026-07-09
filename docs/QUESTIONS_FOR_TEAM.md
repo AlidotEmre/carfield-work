@@ -1,21 +1,28 @@
-# Sorulacaklar — Daniele toplantısı
+# Sorulacaklar — Ekip (Daniele üzerinden)
 
 Toplantı: önümüzdeki hafta Pazartesi veya Cuma 15:00 (tarih henüz teyitli değil).
+**Alternatif (2026-07-09):** Daniele Pazartesi 20 Temmuz'dan itibaren bir hafta
+Torino'da olacağını, isterse Energy Center'da yüz yüze görüşebileceklerini
+söyledi.
 Aşağıdakiler kod tarafında yer tutucu/varsayım olarak bırakılmış, gerçek
 donanım/RTL bilgisi olmadan ilerlenemeyen noktalar. Her madde hangi kod
 konumunu etkilediğiyle birlikte.
 
-## 1. Mailbox: `INT_SND_EN`'i kim yazıyor?
+## 1. Mailbox: `INT_SND_EN`'i kim yazıyor? — DÜŞÜK ÖNCELİK, pratikte çözüldü (2026-07-09)
 
-Doorbell'ın `INT_SND_SET` olduğu netleşti (bkz. madde altında), ama bir
-inbound mailbox'ın (mbox 5, mbox 7) kesmesini kimin **enable** ettiği
-(receiver kendi `INT_SND_EN`'ini mi yazıyor, yoksa gönderen taraf mı)
-netleşmedi.
+Doorbell'ın `INT_SND_SET` olduğu netleşti (üç yön için de teyitli — host→OT,
+OT→host, PULP→host). Daniele daha önce "Currently INT_SND_EN can be written
+by all domains" demişti (sabit sahiplik yok). Bu, "kim yazmalı" sorusunu tam
+yanıtlamasa da (kim YAPABİLİR ≠ kim YAPAR), pratik sonucu şu: host'un kendi
+inbound hattı için kendi `INT_SND_EN`'ini yazması (mevcut varsayım,
+`carfield_mbox_in_init()`) kimseyle çakışmaz, çünkü herkes yazabiliyor.
+Zorlayıcı bir engel değil artık — toplantıda teyit edilirse iyi olur ama
+kod tarafında bekleyen bir şey yok.
 
 - Etkilenen kod: `carfield_mbox_in_init()` —
-  `mailbox-simulation-withoutFPGA/carfield_mbox.c`. Şu an receiver'ın
-  kendi `INT_SND_EN`'ini yazdığı varsayılıyor (host, kendi mbox 5/7
-  handle'ında). Yanlışsa tek satır değişir ama yön netleşmeli.
+  `mailbox-simulation-withoutFPGA/carfield_mbox.c` (Windows review:
+  `carfield_mbox_sim`). Mevcut varsayım (receiver kendi `INT_SND_EN`'ini
+  yazıyor) güvenli, değişiklik gerekmiyor.
 
 ## 2. EOC kesmesinin kesin PLIC source ID'si
 
@@ -34,6 +41,11 @@ dokümanlarda yok.
 PULP'a komuta giden bir mailbox yok; tüm komut/senkronizasyon yolu Event
 Unit üzerinden olacak. Bu, mailbox katmanından tamamen ayrı, kernel
 driver tarafında henüz hiç başlanmadı.
+
+**Kesinleşti (2026-07-09):** `mbox.h`'deki `HOST_TO_CLUSTER_MBOX=6` /
+`CLUSTER_MBOX_EVT=22` tanımları Daniele'ye göre "hiç kullanılmıyor,
+yanıltıcı, silinebilir" — yani PULP'a giden bir mailbox yolu kesinlikle
+yok, EU tek yol. Bu maddenin kendisi hâlâ açık (register API bilinmiyor).
 
 - Elimde `hal/eu/eu_v3.h` (pulp-sdk) var ama bu **cluster-side** HAL
   (PULP core'larının kendi EU'sunu kullanması) — host-side (Linux
@@ -73,7 +85,17 @@ olur, şimdiden haber vermek için sorulmalı.
 ## 6. PULP cluster boot adresi (0x78000000) — canlı teyit
 
 Daniele "you can assume" demişti, DOĞRULANMIŞ sayılıyor ama toplantıda
-canlı olarak tekrar kontrol edilecek (Daniele'nin kendi önerisi).
+canlı olarak tekrar kontrol edilecek (Daniele'nin kendi önerisi — artık
+kodda tam boot adresini gösterebileceğini söyledi).
+
+**Kısmen netleşti, YENİ belirsizlik (2026-07-09):** Daniele "L2 boyutu
+1 MiB, `0x78000000`–`0x78100000`" dedi (sahiplik kavramı yok, paylaşımlı).
+Ama `driver/carfield.c`'deki mmap tablosu 4 ayrı 1 MiB L2 bölgesi
+tanımlıyor: `L2_INTL_0=0x78000000`, `L2_CONT_0=0x78100000`,
+`L2_INTL_1=0x78200000`, `L2_CONT_1=0x78300000` (toplam 4 MiB). **Sorulacak:**
+INTL/CONT aynı fiziksel SRAM'in iki adres-alanı görünümü mü (interleaved vs
+contiguous, aynı byte'lar) yoksa INTL_1/CONT_1 farklı bir cluster'a (Spatz?)
+mı ait — yoksa Daniele'nin "1 MiB" cevabı sadece `L2_INTL_0`'ı mı kastediyor?
 
 ## 7. Tek in-place buffer mi, yoksa titanssl'deki gibi ayrı input/output/meta mı?
 
@@ -93,6 +115,11 @@ encrypt/decrypt).
   olan komutlar da olacak mı? İkincisiyse, mailbox'ın 2-letter formatını
   (tek `header_phys`) mi genişletmemiz gerekiyor, yoksa titanssl'in
   input/output/meta üçlü-header modelini mi benimsemeliyiz?
+
+**Daniele'nin cevabı (2026-07-09):** Bilinçli olarak erteledi — "execution
+flow üzerine biraz daha düşünmemiz lazım, ilerledikçe konuşuruz." Sonucun
+host'a mı döneceği yoksa L2'de cluster için mi kalacağı sorusuyla birebir
+bağlantılı, ikisi birlikte netleşecek.
 
 ---
 

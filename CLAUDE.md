@@ -34,10 +34,10 @@ Carfield SoC için Linux kernel driver yazıyor. Proje başlangıcı: 22 Haziran
    veri belleği (data memory) barrier'ı değil. titanssl referansı
    (`titanssl_driver/driver.c:379`) doorbell'dan önce bunu "Clean cache!"
    yorumuyla çağırıyor ama bu muhtemelen bir yanlış anlamaydı — bağımsız
-   doğrulanmış bir gereksinim değil (bkz. TITANSSL_ANALYSIS.md §3).
+   doğrulanmış bir gereksinim değil (bkz. `docs/TITANSSL_ANALYSIS.md` §3).
    CVA6↔mailbox yolunun gerçekten cache-coherent olup olmadığı ve
    doorbell'dan önce gerçek bir veri fence'i/CMO gerekip gerekmediği AÇIK
-   SORU — Daniele toplantısını bekliyor (bkz. `QUESTIONS_FOR_DANIELE.md`
+   SORU — Daniele toplantısını bekliyor (bkz. `docs/QUESTIONS_FOR_TEAM.md`
    madde 4). Netleşene kadar yeni kodda `fence.i`'yi (ya da başka bir
    barrier'ı) "zaten böyle yapılıyor" diye körü körüne ekleme.
 2. Mailbox'a yazılan her adres `page_to_phys()` ile çevrilmeli — sanal adres donanımda çalışmaz

@@ -87,8 +87,8 @@ Report wording: "validated end-to-end against a software mock implementing the r
 
 ## 9. Definition of done
 
-- [ ] `mock_ot=0` path byte-identical to today (no regressions)
-- [ ] All §7 cases pass 3× consecutively; `mock_bad_xform=1` makes the suite FAIL
-- [ ] `rmmod` clean under all modes incl. mid-`mock_no_reply`
-- [ ] §5 rejections return distinct codes; host surfaces them as distinct errnos
-- [ ] §8 table copied into the repo's memory notes with results
+- [x] `mock_ot=0` path byte-identical to today (no regressions) — confirmed 2026-07-06, carfield-VM
+- [x] All §7 cases pass 3× consecutively; `mock_bad_xform=1` makes the suite FAIL — confirmed 2026-07-06 (`tests/mock_ot_test`, 3 reps × 4 geometry cases PASS, `mock_bad_xform` sanity-fails as required)
+- [x] `rmmod` clean under all modes incl. mid-`mock_no_reply` — confirmed, no Bad-page/BUG/leak warnings in `dmesg`
+- [x] §5 rejections return distinct codes; host surfaces them as distinct errnos — confirmed (`mock_corrupt_magic` → `EILSEQ`, etc.)
+- [x] §8 table copied into the repo's memory notes with results — see `memory/project_alsaqr.md` "Mock OpenTitan Consumer — Gerçek Kernel Testi" section

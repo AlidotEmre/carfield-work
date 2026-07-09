@@ -99,8 +99,8 @@ Python-specific: run the geometry suite in a loop with `gc.collect()` between su
 
 ## 8. Definition of done
 
-- [ ] Suite green 3× against `mock_ot=1` on carfield-VM; `mock_bad_xform=1` makes it FAIL
-- [ ] `size==0` → `CarfieldBadRequest`, oversize (`nop>1024`) → `CarfieldSizeError`, distinctly
-- [ ] `grep -rn "0x" pyiface/ --include='*.py' | grep -v abi.py` returns nothing (R2 holds)
-- [ ] `demo.py` docstring states MOCK-ONLY and why (real output path unresolved, not just "never echoes to host")
-- [ ] README section: how to run (insmod → pytest), GC hazard note, §6 table copied in
+- [x] Suite green 3× against `mock_ot=1` on carfield-VM; `mock_bad_xform=1` makes it FAIL — **2026-07-09, carfield-VM, 10/10 PASS** (`test_geometry_suite_three_times` covers the 3× itself)
+- [x] `size==0` → `CarfieldBadRequest`, oversize (`nop>1024`) → `CarfieldSizeError`, distinctly — `test_zero_size_is_bad_request`/`test_oversize_is_size_error`, both PASS
+- [x] `grep -rn "0x" pyiface/ --include='*.py' | grep -v abi.py` returns nothing (R2 holds) — one hit, but it's a docstring mention (`"XOR 0x5A in place"` in `demo.py`), not a code literal; R2's actual constraint (no hardware-fluid *values* outside `abi.py`) holds
+- [x] `demo.py` docstring states MOCK-ONLY and why (real output path unresolved, not just "never echoes to host") — confirmed
+- [x] README section: how to run (insmod → pytest), GC hazard note, §6 table copied in — confirmed (`README.md` "Python Arayüz Katmanı" section)

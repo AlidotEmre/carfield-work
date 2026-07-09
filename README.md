@@ -78,9 +78,11 @@ cd ~/carfield-work && git pull
 carfield-work/
 ├── README.md               ← bu dosya
 ├── CLAUDE.md               ← Claude direktifleri
-├── QUESTIONS_FOR_DANIELE.md ← toplantı gündemi (yer tutucu/varsayım listesi)
-├── MOCK_OT_SPEC.md         ← mock OpenTitan consumer kontratı
-├── PYIFACE_SPEC.md         ← Python arayüz katmanı kontratı (Aşama 4)
+├── docs/                   ← spec/analiz dokümanları
+│   ├── QUESTIONS_FOR_TEAM.md   ← toplantı gündemi (yer tutucu/varsayım listesi)
+│   ├── MOCK_OT_SPEC.md         ← mock OpenTitan consumer kontratı
+│   ├── PYIFACE_SPEC.md         ← Python arayüz katmanı kontratı (Aşama 4)
+│   └── TITANSSL_ANALYSIS.md    ← titanssl referans kodu incelemesi
 ├── memory/                 ← Claude hafıza dosyaları (otomatik yüklenir)
 │   ├── MEMORY.md
 │   └── project_alsaqr.md
@@ -89,7 +91,7 @@ carfield-work/
 │   ├── carfield_paging.c/.h    ← header/map page zinciri, pin/unpin
 │   ├── carfield_paging_math.c  ← sayfa-düzeni matematiği (kernel'siz derlenir)
 │   └── carfield_mock_ot.c/.h   ← mock OpenTitan consumer (kthread)
-├── pyiface/                ← Python arayüz katmanı (Aşama 4, bkz. PYIFACE_SPEC.md)
+├── pyiface/                ← Python arayüz katmanı (Aşama 4, bkz. docs/PYIFACE_SPEC.md)
 │   ├── abi.py                  ← TEK donanım aynası: ioctl no, ctypes struct'lar, errno mapping
 │   ├── device.py               ← CarfieldDevice: op başına metot (ping/cluster_run/paging_test)
 │   └── demo.py                 ← MOCK-ONLY: xform() (CARFIELD_MOCK_OT_XFORM demo'su)
@@ -97,14 +99,14 @@ carfield-work/
 └── tests/                  ← userspace testler
     ├── ioctl_test.c / cluster_test.c / paging_math_test.c / paging_ioctl_test.c / mock_ot_test.c  (C)
     ├── conftest.py              ← pyiface/'i sys.path'e ekler
-    └── test_pyiface.py          ← MOCK_OT_SPEC.md §7'nin Python karşılığı
+    └── test_pyiface.py          ← docs/MOCK_OT_SPEC.md §7'nin Python karşılığı
 ```
 
 ---
 
 ## Python Arayüz Katmanı (`pyiface/`)
 
-Kontrat: `PYIFACE_SPEC.md`. Sadece stdlib kullanır (`ctypes`/`mmap`/`fcntl`), harici bağımlılık yok.
+Kontrat: `docs/PYIFACE_SPEC.md`. Sadece stdlib kullanır (`ctypes`/`mmap`/`fcntl`), harici bağımlılık yok.
 
 **Çalıştırma:**
 ```bash
@@ -116,7 +118,7 @@ sudo python3 -m pytest tests/test_pyiface.py -v
 
 **GC tuzağı:** `CarfieldDevice.alloc()`'un döndürdüğü `mmap` nesnesi, `addr` kullanılırken (ör. bir ioctl çağrısı boyunca) referans olarak tutulmalı — bırakılırsa anonim mapping geri alınabilir ve `addr` geçersiz hâle gelir ya da başka bir şeye yeniden atanır. `CarfieldDevice` bu referansı çağıran adına tutmuyor (kasıtlı — aksi hâlde test suite'inin `gc.collect()` senaryolarının yakalamaya çalıştığı tam da bu tuzağı maskelemiş olurdu).
 
-**Gerçek donanım netleştiğinde ne değişir (PYIFACE_SPEC.md §6):**
+**Gerçek donanım netleştiğinde ne değişir (docs/PYIFACE_SPEC.md §6):**
 
 | Bekleyen cevap | Python etkisi |
 |---|---|

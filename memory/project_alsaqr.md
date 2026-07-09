@@ -170,7 +170,7 @@ teyitli değil.
    zorunlu" ifadesi titanssl'den (muhtemelen yanlış anlaşılmış) miras
    kalmıştı, düzeltildi (bkz. TITANSSL_ANALYSIS.md §3). CVA6↔mailbox
    coherence + gerçek bir data fence/CMO gerekip gerekmediği açık soru
-   (bkz. `CLAUDE.md` madde 1, `QUESTIONS_FOR_DANIELE.md` madde 4).
+   (bkz. `CLAUDE.md` madde 1, `docs/QUESTIONS_FOR_TEAM.md` madde 4).
 2. **Fiziksel adres zorunlu** — Mailbox'a `page_to_phys()` ile çevrilmiş adres yazılmalı
 3. **32-bit adres kısıtı** — OpenTitan 32-bit adres alanında çalışıyor
 4. **Multi-page indirection** — Sanal adreste ardışık bellek fiziksel olarak dağınık olabilir; header page + map page yapısı ile çözülüyor
@@ -228,7 +228,10 @@ teyitli değil.
   - ✅ Mock OpenTitan consumer (kthread tabanlı, `MOCK_OT_SPEC.md`) yazıldı
     ve **gerçek kernelde (carfield-VM) uçtan uca doğrulandı** (2026-07-06)
     — bkz. aşağıdaki "Mock OpenTitan Consumer — Gerçek Kernel Testi" bölümü.
-- **Aşama 4** ⏳ SIRADA — Python arayüzü (ctypes/cffi)
+- **Aşama 4** ✅ İlk tur tamamlandı — Python arayüzü (`pyiface/`), carfield-VM'de
+  `mock_ot=1` altında `sudo python3 -m pytest tests/test_pyiface.py -v` ile
+  **10/10 PASS** (2026-07-09, kullanıcı bildirdi). Detay aşağıda "Aşama 4 — VM
+  Testi Sonucu" bölümünde.
 
 ## Mock OpenTitan Consumer — Gerçek Kernel Testi (2026-07-06)
 
@@ -265,7 +268,7 @@ bununla kapandı; sadece bu belgeleme maddesi açıktı, şimdi o da kapandı.
 **How to apply:** Mock OT'yi tekrar "test edilmedi" diye sunma. Bu, gerçek mailbox
 donanımının yerini TUTMUYOR — mailbox entegrasyonu (`carfield_mbox.c` → `carfield.c`)
 hâlâ yapılmadı ve Daniele toplantısından gelecek gerçek IRQ/PLIC numaraları ile
-`INT_SND_EN` yön bilgisini bekliyor (bkz. `QUESTIONS_FOR_DANIELE.md` madde 1-2).
+`INT_SND_EN` yön bilgisini bekliyor (bkz. `docs/QUESTIONS_FOR_TEAM.md` madde 1-2).
 
 ## Daniele'den Yeni Mail + Gerçek mbox.h Kodu (2026-07-06) — ÖNEMLİ ÇELİŞKİLER, DİKKATLİ OL
 
@@ -339,24 +342,129 @@ gidişatı bu netleşmeye göre değişebilir.
 Daniele ile kendi netleştirecek. Netleşene kadar `carfield_mbox.c`/`carfield.c`'de
 SND/RCV veya buffer-model varsayımına dayanan hiçbir kod değişikliği önerme/yapma.
 
-## Sıradaki Oturum Başlangıç Noktası
+## Aşama 4 — VM Testi Sonucu (2026-07-09)
 
-1. Daniele ile toplantı/mail — yukarıdaki 3 çelişkiyi (SND/RCV, çıktı hedefi,
-   PULP mailbox var mı) ve `magic` alanı yanlış anlamasını netleştir; EOC
-   `CARFIELD_EOC_IRQ` için gerçek PLIC source ID hâlâ bekleniyor. (Kullanıcı bu
-   turu kendi yürütüyor.)
-2. ~~carfield_mbox.c rework~~ ✅ bitti (commit `a28ad6d`, bkz. yukarı) — AMA yukarıdaki
-   Çelişki 1 nedeniyle muhtemelen yanlış register kullanıyor, netleşmeden dokunma.
+carfield-VM'de `sudo insmod carfield-mod.ko mock_ot=1` sonrası
+`sudo python3 -m pytest tests/test_pyiface.py -v`: **10/10 PASS**, hiçbir
+sorun bildirilmedi (geometri süiti 4 case × dahili 3 tekrar, demo xform
+roundtrip, `mock_no_reply`/`mock_corrupt_magic`/`mock_bad_xform` fault
+path'leri, size==0/oversize sınır case'leri — hepsi geçti).
+`PYIFACE_SPEC.md` §8 DoD'nin ilk maddesi ("Suite green 3× against
+mock_ot=1") kapandı — `test_geometry_suite_three_times` testin kendisi
+3 tekrarı içeriyor, tek yeşil çalıştırma yeterli.
+
+**Why:** Bu, Aşama 4'ün gerçek kernelde doğrulandığının somut kanıtı —
+önceki oturumda sadece elle/`py_compile` ile doğrulanabilmişti.
+
+**How to apply:** Aşama 4'ü tekrar "doğrulanmadı" diye sunma, ilk tur
+kapandı. Sıradaki iş gerçek op'lar (load_model/run_inference) veya
+mailbox netleşmesi.
+
+## Daniele'nin Yeni Cevapları (2026-07-09) — 3 çelişkinin durumu + yeni bulgular
+
+Kullanıcı Daniele ile devam eden mail zincirinin en son halkasını paylaştı
+(kendi Temmuz 6 15:21 mailine Daniele'nin satır arası cevapları + Torino'ya
+20 Haziran'dan itibaren bir hafta gelme teklifi). Kod tabanı bu cevaplara
+karşı elle taranarak çapraz kontrol edildi (bkz. aşağıdaki "Why/How").
+
+**Çelişki 1 (doorbell register) — ÇÖZÜLDÜ, mevcut kod zaten DOĞRU:**
+Daniele üç yön için de doğruladı: host→OT (mbox1) / OT→host (mbox7) /
+PULP→host (mbox5) hepsi `INT_SND_SET`. `mbox.h`'deki `mailbox_send()`'in
+sonunda `INT_RCV_SET`'e yazması **kasıtsız/zararsız ölü kod** — o
+register'a bağlı hiçbir interrupt hattı yok; Daniele "mbox.h'deki
+primitifleri şimdilik black-box olarak al" dedi. `carfield_mbox.c`
+reworku (`a28ad6d`, `mailbox-simulation-withoutFPGA` / `carfield_mbox_sim`)
+zaten `INT_SND_SET` kullanıyor — **kod değişikliği gerekmiyor.**
+
+**Çelişki 3 (PULP mailbox var mı) — ÇÖZÜLDÜ, yok:** Daniele
+`HOST_TO_CLUSTER_MBOX=6`/`CLUSTER_MBOX_EVT=22`'nin "hiç kullanılmadığını,
+yanıltıcı olduğunu, silinebileceğini" söyledi. Haziran bilgisi (PULP'a
+mailbox yok, EU üzerinden) doğrulandı. Kod tabanımızda zaten bu macrolara
+hiç referans yok — etkilenen kod yok, sadece EU-only varsayımı kesinleşti.
+
+**Çelişki 2 (OT çıktı hedefi) — kısmen netleşti, ASIL SORU (sonuç host'a
+nasıl döner) hâlâ açık, Daniele bilinçli olarak erteledi:** L2 boyutu
+1 MiB (`0x78000000`–`0x78100000`), sahiplik kavramı yok (paylaşımlı SoC
+belleği, cluster executable + ara hesap verisi burada), OT struct'ı
+okuduktan sonra o L2 bölümü üzerine yazılabilir. Map page L2'de olmak
+zorunda değil — OT'nin DMA'sı tüm belleklere master erişimli, host DRAM'de
+kalabilir (sadece header için L2 önerildi, cache flush sorununu
+atlatmak için). **Sonucun host/Python tarafına nasıl döneceği** sorusu
+Daniele tarafından açıkça ertelendi: "execution flow üzerine biraz daha
+düşünmemiz lazım, ilerledikçe konuşalım." Mock OT'nin host-buffer'a
+geri yazma modelinin gerçek donanımı temsil etmediği (zaten
+`carfield_mock_ot.c`/`demo.py` docstring'lerinde disclaimer'lı) bir kez
+daha doğrulanmış oldu — **değiştirilecek bir şey yok, sadece teyit.**
+
+**YENİ BULGU — kodda düzeltilmemiş gerçek bug, `MBOX_LETTER1` yanlış
+offset'te:** `carfield_mbox.h` (`carfield_mbox_sim` reposu) satır 46
+hâlâ `#define MBOX_LETTER1 0x8C` — üstünde `"!!! VERIFY... expected
+offset would be 0x84... confirm against RTL"` yorumuyla. Gerçek mbox.h
+zaten 2026-07-06'da geldi ve doğru değer (**0x84**) bu dosyanın yukarıdaki
+"Daniele'den Yeni Mail" bölümüne işlendi — ama koddaki yer tutucu hiç
+güncellenmedi. Simülasyon kendi kendine tutarlı olduğu için testler PASS
+veriyor (host ve mock aynı yanlış offset'i kullanıyor), gerçek donanıma
+bağlanıldığında `letter1` (komut/status) yanlış register'a gidecekti —
+klasik "sim'de PASS, FPGA'da çöp" senaryosu. **Düzeltme tek satır**
+(`0x8C` → `0x84`), henüz uygulanmadı, kullanıcı onayı bekleniyor.
+
+**YENİ BELİRSİZLİK — L2 bölge sayısı çelişkisi:** `driver/carfield.c`
+mmap tablosu 4 ayrı 1 MiB L2 bölgesi tanımlıyor
+(`L2_INTL_0=0x78000000, L2_CONT_0=0x78100000, L2_INTL_1=0x78200000,
+L2_CONT_1=0x78300000`, toplam 4 MiB), Daniele ise "L2 boyutu 1 MiB,
+`0x78000000`–`0x78100000`" dedi (tek bölge gibi). INTL/CONT muhtemelen
+aynı fiziksel SRAM'in iki görünümü (interleaved vs contiguous adres
+alanı) ya da INTL_1/CONT_1 ikinci bir cluster'a ait olabilir — netleşmedi.
+**Toplantıda/mailde sorulmalı**, `docs/QUESTIONS_FOR_TEAM.md`'ye eklendi.
+
+**Diğer küçük teyitler:** `magic` alanının sayfa index'i olmadığı,
+sabit sanity değeri olduğu ve başlangıç sayfasının `map[0]` olduğu
+netleşti (kod zaten bu şekilde yazılmıştı, değişiklik yok — sadece
+Daniele'nin yanlış anlaması düzeltildi). Transfer tavanı: FPGA'da fiziksel
+limit 1 MiB, bizim map-page kapasitemiz (4 MB, `PAGE_SIZE/sizeof(u32)`
+sınırı) zaten üstünde, sorun değil. OT'nin PLIC'i tek kaynak (IRQ 159)
+kullanıyor, `letter1` değeriyle demux ediyor — bu OT'nin kendi tarafı,
+bizim `CARFIELD_EOC_IRQ` sorumuzu (madde 2, hâlâ açık) etkilemiyor.
+Daniele Pazartesi 20 Temmuz'dan itibaren bir hafta Torino'da, yüz yüze
+görüşme opsiyonu sundu.
+
+**Why:** Bu mail zinciri, önceki oturumda "açık" işaretlenen 3
+çelişkiden ikisini kapattı ve üçüncüsünü (sonuç dönüş yolu) kasıtlı
+olarak sonraya bıraktı; ayrıca kod taraması sırasında hafızaya
+işlenmiş ama koda hiç yansımamış bir gerçek bug (LETTER1) ortaya çıktı.
+
+**How to apply:** Çelişki 1 ve 3'ü tekrar "açık" diye sunma, kapandı.
+Çelişki 2'nin (sonuç dönüş yolu) AÇIK kaldığını unutma — Daniele kendi
+isteğiyle erteledi, zorlama. `MBOX_LETTER1` düzeltmesi ve L2 bölge
+sayısı sorusu bir sonraki oturumun ilk maddeleri olmalı (aşağıdaki
+"Sıradaki Oturum" güncellendi).
+
+## Sıradaki Oturum Başlangıç Noktası (2026-07-09 itibarıyla güncellendi)
+
+1. **`MBOX_LETTER1` bugfix** — `carfield_mbox_sim/carfield_mbox.h:46`,
+   `0x8C` → `0x84`. Tek satır, kanıt hazır (gerçek `mbox.h`), kullanıcı
+   onayı bekleniyor — bkz. yukarı "YENİ BULGU".
+2. ~~carfield_mbox.c rework~~ ✅ bitti (commit `a28ad6d`) — Çelişki 1
+   ÇÖZÜLDÜ, `INT_SND_SET` kullanımı DOĞRU teyit edildi, dokunmaya gerek yok.
 3. ~~mock_mmio/pulp_sim güncellemesi~~ ✅ bitti (`opentitan_sim.c` +
    rework edilmiş `pulp_sim.c`, bkz. yukarı).
-4. `carfield_mbox.c`'yi (mock MMIO + userspace pthread) `driver/carfield.c`'ye
-   (gerçek kernel/ioremap) entegre et — bu, mbox 1/5/7 için de gerçek IRQ
-   numaraları gerektirecek, henüz yok (madde 1'i bekliyor). Ayrıca artık çıktının
-   host'a değil PULP L2'ye gidebileceği modelini de hesaba katmalı.
-5. PULP Event Unit (EU) — henüz başlanmadı; `hal/eu/eu_v3.h` (pulp-sdk,
+4. **`carfield_mbox.c`'yi `driver/carfield.c`'ye entegre et** — doorbell
+   modeli artık teyitli (madde 2 kapandı), ana engel LETTER1 fix + gerçek
+   IRQ numaraları (mbox 1/5/7 için hâlâ yok) + header'ın nerede
+   yaşayacağı (host DRAM mı, L2 mi — Daniele L2 önerdi ama netleşmedi).
+   `INT_SND_EN` sahipliği artık pratik bir engel değil ("tüm domainler
+   yazabiliyor", mevcut "receiver kendi enable eder" varsayımı çakışma
+   yaratmaz).
+5. **L2 bölge sayısı sorusu** — `driver/carfield.c`'deki 4× 1 MiB L2
+   bölgesi (`INTL_0/CONT_0/INTL_1/CONT_1`) ile Daniele'nin "L2 = 1 MiB"
+   cevabı arasındaki belirsizlik netleşmeli (bkz. yukarı, `docs/QUESTIONS_FOR_TEAM.md`'ye eklendi).
+6. **Sonuç dönüş yolu (host mu, L2'de mi kalıyor)** — Daniele bilinçli
+   erteledi, zorlamaya gerek yok, ama gerçek op tasarımından önce netleşmesi
+   şart.
+7. PULP Event Unit (EU) — henüz başlanmadı; `hal/eu/eu_v3.h` (pulp-sdk,
    cluster-side HAL) referans olabilir ama host-side entegrasyon ayrı iş.
-   `HOST_TO_CLUSTER_MBOX`/`CLUSTER_TO_HOST_MBOX` çelişkisi netleşince EU'nun hâlâ
-   gerekli olup olmadığı da netleşecek.
+   Artık kesin: mbox 6/EVT 22 yok, EU tek yol — Daniele'nin canlı
+   gösterimini bekliyor.
 
 ## Repo
 
