@@ -13,6 +13,7 @@
 #include "carfield.h"
 #include "carfield_paging.h"
 #include "carfield_mock_ot.h"
+#include "carfield_mbox_hw.h"
 
 #define DEVICE_NAME "carfield"
 #define CLASS_NAME  "carfield"
@@ -277,14 +278,30 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 		break;
 	}
 
-	/* ── Mock OpenTitan consumer (MOCK_OT_SPEC.md) ──────────────────── */
+	/* ── OpenTitan consumer, mock OR real hardware (MOCK_OT_SPEC.md) ──
+	 *
+	 * Same ioctl/struct for both backends -- mock_ot=1 and real_mbox=1
+	 * are mutually exclusive (enforced in carfield_init()), so at most
+	 * one of carfield_mock_ot_enabled()/carfield_mbox_hw_enabled() is
+	 * ever true. The flow (build -> send -> wait -> read -> release) is
+	 * unchanged from the mock-only version; only which three functions
+	 * it calls differs.
+	 *
+	 * NOTE: reusing the CARFIELD_MOCK_OT_XFORM name/struct for real
+	 * hardware traffic is a naming smell inherited from the spec this
+	 * was implemented against ("wire the hw backend into the existing
+	 * mock_ot channel abstraction without touching its callers") -- flag
+	 * for a rename once the real backend is more than a same-night FPGA
+	 * smoke test.
+	 */
 	case CARFIELD_MOCK_OT_XFORM: {
 		struct carfield_mock_ot_req req;
 		struct carfield_paging_handle h;
 		u32 letter0, letter1;
+		bool use_hw = carfield_mbox_hw_enabled();
 		int ret;
 
-		if (!carfield_mock_ot_enabled())
+		if (!use_hw && !carfield_mock_ot_enabled())
 			return -ENODEV;
 
 		if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
@@ -295,12 +312,17 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 		if (ret)
 			return ret;
 
-		carfield_mock_ot_send(h.header_phys, CARFIELD_MOCK_OT_CMD_XFORM);
+		if (use_hw)
+			carfield_mbox_hw_send(h.header_phys, CARFIELD_MOCK_OT_CMD_XFORM);
+		else
+			carfield_mock_ot_send(h.header_phys, CARFIELD_MOCK_OT_CMD_XFORM);
 
-		ret = carfield_mock_ot_wait_completion(CARFIELD_MOCK_OT_TIMEOUT_MS);
+		ret = use_hw ? carfield_mbox_hw_wait_completion(CARFIELD_MOCK_OT_TIMEOUT_MS)
+			     : carfield_mock_ot_wait_completion(CARFIELD_MOCK_OT_TIMEOUT_MS);
 		if (ret) {
-			/* mock_no_reply, or a signal -- release pages either
-			 * way so this never leaks, then report the failure. */
+			/* mock_no_reply / real timeout, or a signal -- release
+			 * pages either way so this never leaks, then report
+			 * the failure. */
 			carfield_paging_release(&h);
 			req.mock_status = CARFIELD_MOCK_OT_STATUS_NONE;
 			if (copy_to_user((void __user *)arg, &req, sizeof(req)))
@@ -308,7 +330,10 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 			return ret;
 		}
 
-		carfield_mock_ot_read_reply(&letter0, &letter1);
+		if (use_hw)
+			carfield_mbox_hw_read_reply(&letter0, &letter1);
+		else
+			carfield_mock_ot_read_reply(&letter0, &letter1);
 		(void)letter0; /* echoed header_phys, nothing to cross-check
 				* it against here -- h is about to be released */
 		carfield_paging_release(&h);
@@ -317,6 +342,22 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 		if (copy_to_user((void __user *)arg, &req, sizeof(req)))
 			return -EFAULT;
 
+		if (use_hw) {
+			/*
+			 * Real OpenTitan's letter1 status-code semantics are
+			 * NOT known -- MOCK_OT_SPEC.md §5's OK/ERR_MAGIC/...
+			 * table is a convention this driver's own mock
+			 * invented for testing, not something confirmed
+			 * against real firmware. Running a real status
+			 * through carfield_mock_ot_status_to_errno() would
+			 * silently mislabel it as one of the mock's own
+			 * meanings. Report success-of-transport (a reply
+			 * arrived) and hand the raw value to userspace via
+			 * mock_status for now; revisit once Daniele's session
+			 * clarifies real status codes.
+			 */
+			return 0;
+		}
 		return carfield_mock_ot_status_to_errno(letter1);
 	}
 
@@ -400,9 +441,30 @@ static int __init carfield_init(void)
 		pr_warn("carfield: CARFIELD_EOC_IRQ not configured yet, skipping request_irq\n");
 	}
 
-	ret = carfield_mock_ot_start();
-	if (ret)
-		pr_warn("carfield: carfield_mock_ot_start failed: %d\n", ret);
+	/*
+	 * mock_ot=1 and real_mbox=1 are two backends for the same channel
+	 * seam -- never start both. Their internal state is fully separate
+	 * (no data race between them), but the ioctl's use_hw selection
+	 * always prefers hardware when carfield_mbox_hw_enabled() is true,
+	 * so if both were left running, mock_ot=1 would silently become dead
+	 * weight (kthread spun up, CPU/memory held, never actually
+	 * exercised) instead of testing what its caller asked for -- exactly
+	 * the "never both backends live at once" spec requirement this
+	 * guards. Refuse both, leave the rest of the driver
+	 * (PING/CLUSTER_RUN/PAGING_TEST) usable rather than failing the
+	 * whole insmod.
+	 */
+	if (carfield_mock_ot_requested() && carfield_mbox_hw_requested()) {
+		pr_err("carfield: mock_ot=1 and real_mbox=1 both set -- mutually exclusive backends, starting neither\n");
+	} else {
+		ret = carfield_mock_ot_start();
+		if (ret)
+			pr_warn("carfield: carfield_mock_ot_start failed: %d\n", ret);
+
+		ret = carfield_mbox_hw_start();
+		if (ret)
+			pr_warn("carfield: carfield_mbox_hw_start failed: %d\n", ret);
+	}
 
 	pr_info("carfield: /dev/%s ready (major=%d)\n",
 		DEVICE_NAME, MAJOR(dev_num));
@@ -420,6 +482,7 @@ err_chrdev:
 static void __exit carfield_exit(void)
 {
 	carfield_mock_ot_stop();
+	carfield_mbox_hw_stop();
 
 	if (eoc_irq_requested)
 		free_irq(CARFIELD_EOC_IRQ, &cdev_data);

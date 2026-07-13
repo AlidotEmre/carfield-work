@@ -123,9 +123,18 @@ bağlantılı, ikisi birlikte netleşecek.
 
 ---
 
+## 8. Mailbox completion IRQ'unun PLIC source ID'si — ÇÖZÜLDÜ (2026-07-13), 58
+
+`HOST_MBOX_IRQ 58`, Daniele'nin gerçek `car_lib_mbox.h` dosyasında tanımlı
+(kaynak doğrulandı) — `CARFIELD_MBOX_IRQ` artık `58`, `request_irq()`
+gerçek FPGA'da canlı çalışacak.
+
+- Etkilenen kod: `driver/carfield_mbox_hw.c` — `CARFIELD_MBOX_IRQ = 58`.
+
 ## Düşük öncelik / bilgi amaçlı (cevap beklemiyor)
 
-- `MBOX_LETTER0`/`MBOX_LETTER1` register offset'leri (0x80/0x8C) —
-  Daniele bunlarla uğraşmamıza gerek olmadığını, low-level API'lerle
-  birlikte geleceğini söylemişti. Register-access katmanına
-  (`mbox_reg()`) fazla yatırım yapılmadı, bu doğru.
+- `MBOX_LETTER0`/`MBOX_LETTER1` register offset'leri (**0x80/0x84** —
+  önceki `0x8C` şüphesi 2026-07-06'da gelen gerçek `mbox.h` ile
+  düzeltildi, bkz. yukarı) — Daniele bunlarla uğraşmamıza gerek
+  olmadığını, low-level API'lerle birlikte geleceğini söylemişti.
+  Register-access katmanına fazla yatırım yapılmadı, bu doğru.

@@ -50,6 +50,11 @@ void carfield_mock_ot_stop(void);
  * forever waiting for a consumer that doesn't exist. */
 bool carfield_mock_ot_enabled(void);
 
+/* True iff mock_ot=1 was requested, independent of whether the kthread
+ * actually started -- used only for the mock_ot/real_mbox mutual exclusion
+ * check in carfield_init(), which runs before either backend has started. */
+bool carfield_mock_ot_requested(void);
+
 /*
  * Backend seam (MOCK_OT_SPEC.md §2.4): send() + wait_completion() +
  * read_reply(). This is the mock backend (shared state + waitqueues); a

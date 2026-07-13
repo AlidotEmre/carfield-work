@@ -256,7 +256,7 @@ sonuçla birlikte):
 |---|---|
 | Header/map'teki fiziksel adresler bağımsız olarak çözülebilir ve okunabilir | OT'nin interconnect'i bu DDR adreslerine erişebilir / adres-görünümü çevirisi |
 | Fiziksel adres üzerinden yazma, pinlenmiş user buffer'a ulaşıyor (`FOLL_WRITE`) | CVA6↔OT cache coherence (doorbell öncesi flush sorusu, hâlâ açık) |
-| `fpo/fps/lps` geometrisi uçtan uca doğru işleniyor | Gerçek mailbox register semantiği (doorbell/completion kablolaması, IRQ 58 vb.) |
+| `fpo/fps/lps` geometrisi uçtan uca doğru işleniyor | Gerçek mailbox register semantiğinin silikon üzerinde fiilen çalışması (doorbell yazımı gözlemlendi mi, completion IRQ 58 gerçekten tetikleniyor mu) — register haritası ve IRQ numarası artık teyitli (`docs/QUESTIONS_FOR_TEAM.md` madde 8), sadece gerçek donanıkta henüz denenmedi |
 | Timeout, hata, release/unpin yolları canlı bir tüketici altında çalışıyor | 32-bit'in gerçek Carfield RAM'ine sığması; gerçek OT firmware davranışı/performansı |
 
 **Rapor ederken ifade:** "ratified kontratı uygulayan bir yazılım mock'una karşı uçtan
@@ -447,13 +447,13 @@ sayısı sorusu bir sonraki oturumun ilk maddeleri olmalı (aşağıdaki
    ÇÖZÜLDÜ, `INT_SND_SET` kullanımı DOĞRU teyit edildi, dokunmaya gerek yok.
 3. ~~mock_mmio/pulp_sim güncellemesi~~ ✅ bitti (`opentitan_sim.c` +
    rework edilmiş `pulp_sim.c`, bkz. yukarı).
-4. **`carfield_mbox.c`'yi `driver/carfield.c`'ye entegre et** — doorbell
-   modeli artık teyitli (madde 2 kapandı), ana engel LETTER1 fix + gerçek
-   IRQ numaraları (mbox 1/5/7 için hâlâ yok) + header'ın nerede
-   yaşayacağı (host DRAM mı, L2 mi — Daniele L2 önerdi ama netleşmedi).
-   `INT_SND_EN` sahipliği artık pratik bir engel değil ("tüm domainler
-   yazabiliyor", mevcut "receiver kendi enable eder" varsayımı çakışma
-   yaratmaz).
+4. ~~`carfield_mbox.c`'yi `driver/carfield.c`'ye entegre et~~ ✅ kod tarafı
+   bitti (2026-07-13, bkz. yukarı "Mailbox Hardware Backend Entegrasyonu") —
+   `driver/carfield_mbox_hw.c/.h`, `real_mbox=1`. Kalan engel artık sadece
+   gerçek mailbox completion IRQ'un PLIC source ID'si (bkz.
+   `docs/QUESTIONS_FOR_TEAM.md` madde 8) — o gelene kadar send() çalışır,
+   receive işlevsiz. Sıradaki ilk iş: carfield-VM'de derleme + spec §5
+   test adımları (henüz hiç çalıştırılmadı).
 5. **L2 bölge sayısı sorusu** — `driver/carfield.c`'deki 4× 1 MiB L2
    bölgesi (`INTL_0/CONT_0/INTL_1/CONT_1`) ile Daniele'nin "L2 = 1 MiB"
    cevabı arasındaki belirsizlik netleşmeli (bkz. yukarı, `docs/QUESTIONS_FOR_TEAM.md`'ye eklendi).
@@ -464,6 +464,104 @@ sayısı sorusu bir sonraki oturumun ilk maddeleri olmalı (aşağıdaki
    cluster-side HAL) referans olabilir ama host-side entegrasyon ayrı iş.
    Artık kesin: mbox 6/EVT 22 yok, EU tek yol — Daniele'nin canlı
    gösterimini bekliyor.
+
+## Mailbox Hardware Backend Entegrasyonu (2026-07-13) — kod tarafı bitti, FPGA'da hiç test edilmedi
+
+Bir spec dosyasından (`Mailbox Integration Spec`) hareketle `carfield_mbox_sim`
+reposundaki register-access kodu (`carfield_mbox.c`, zaten kernel-API
+şeklinde yazılmış, userspace mock MMIO'ya karşı doğrulanmış) `driver/`e
+gerçek donanım backend'i olarak taşındı: `driver/carfield_mbox_hw.c/.h`,
+`carfield_mock_ot.c`'nin tanımladığı aynı 3-fonksiyonlu seam'i (send/
+wait_completion/read_reply) implemente ediyor. `real_mbox=1` module param'ı
+bu backend'i, `mock_ot=1` mock'u seçiyor — `carfield_init()`'te ikisi birden
+set edilirse ikisi de başlatılmıyor (log + no-op, insmod'un geri kalanı
+etkilenmiyor).
+
+**IRQ 58 — ilk turda flag edildi, sonra kaynağı bulunup ÇÖZÜLDÜ (aynı
+oturum):** Spec "Host mailbox IRQ (PLIC line) = 58"i "confirmed fact" diye
+sunuyordu ama ilk kontrolde bu sayı proje hafızasında/mail zincirinde hiç
+geçmiyordu, sadece `MOCK_OT_SPEC.md` §8'de örnek/dolgu metin olarak vardı —
+`CARFIELD_MBOX_IRQ` bu yüzden önce `0` yer tutucu bırakıldı. Kullanıcı
+gerçek kaynağı sağladı: `HOST_MBOX_IRQ 58`, Daniele'nin `car_lib_mbox.h`
+dosyasında tanımlı, `HOST_TO_CLUSTER_MBOX`/`CLUSTER_MBOX_EVT` (ikisi de
+ayrıca çürütülmüştü) ile aynı blokta ama kendisi hiç çürütülmedi. Kabul
+edildi — `CARFIELD_MBOX_IRQ` artık `58`, `request_irq()` gerçek FPGA'da
+canlı çalışacak (bkz. `docs/QUESTIONS_FOR_TEAM.md` madde 8). Dosyadaki
+`mailbox_send()`'in `INT_RCV_SET` kullanması gibi diğer eski/düzeltme-öncesi
+parçalar zaten önceki oturumda çözülmüştü, tekrar gündeme getirilmedi.
+
+**Kod incelemesi sırasında bulunup düzeltilen 2 gerçek bug (kimse söylemeden
+fark edilmezdi, bilinçli olarak arandı):**
+1. `carfield_mbox_hw_send()` doorbell'dan önce `mbox_in_ot.completed`'ı
+   sıfırlamıyordu — terk edilmiş bir önceki isteğe (timeout sonrası) geç
+   gelen bir cevap `completed=1` ve bayat letter0/letter1 bırakabilir,
+   SONRAKİ `send()`'in `wait_completion()`'ı o bayat cevabı kendi isteğinin
+   cevabıymış gibi anında döndürürdü. `carfield_mock_ot_send()`'in zaten
+   yaptığı "doorbell'dan önce sıfırla" disiplini eklendi.
+2. `INT_SND_EN` yazımı, ilgili `request_irq()` başarılı olmadan ÖNCE
+   yapılıyordu — yani hiç handler kayıtlı değilken donanımda kesmeyi
+   aktif bırakıyordu. `request_irq()` başarısından SONRAYA taşındı; bu sıra
+   artık gerçekten önemli, çünkü `CARFIELD_MBOX_IRQ=58` ile bu kod yolu
+   FPGA'da fiilen çalışacak (aşağıya bkz).
+
+**Bilinçli tasarım kararı (spec'in birebir port istediğinden farklı,
+gerekçeli):** `carfield_mbox_sim`'in orijinal `carfield_mbox_in_irq()`'ı
+harfleri ISR'da OKUMUYOR, sadece ack edip uyandırıyor; asıl okuma daha sonra
+`wait`'ten dönen process context'te. Bu port ISR içinde CLR'dan hemen sonra
+harfleri okuyor — gerekçe: ikinci bir mesajın harfleri "biz okumadan"
+üzerine yazma riskini (level-sensitive hat + hızlı ardışık mesaj senaryosu)
+minimize ediyor, orijinal tasarımdan daha güvenli bir seçim. Bu bilinçli bir
+sapma, hata değil — ama Daniele'nin RTL'i "CLR yazıldıktan hemen sonra
+LETTER'lar okunabilir kalır mı" konusunda teyit vermeden %100 emin
+olunamaz, FPGA seansında not edilmeli.
+
+**Diğer flag'ler (koda işlendi, yorum olarak):**
+- Ioctl `CARFIELD_MOCK_OT_XFORM`/`struct carfield_mock_ot_req` ismi artık
+  hem mock hem gerçek donanım trafiği için kullanılıyor — spec'in kendi
+  isteğiydi ("mevcut seam'e dokunmadan entegre et"), ama isim kokusu var,
+  ileride yeniden adlandırma düşünülmeli.
+- Gerçek OpenTitan'ın `letter1` status kod semantiği BİLİNMİYOR —
+  `MOCK_OT_SPEC.md` §5'in OK/ERR_MAGIC/... tablosu mock'un kendi icadı,
+  gerçek firmware'in aynı kodları kullanacağı teyit edilmedi. Hw yolunda
+  `carfield_mock_ot_status_to_errno()` ÇAĞRILMIYOR — ioctl sadece "cevap
+  geldi" (0) döndürüyor, ham `letter1` `mock_status` alanında kullanıcıya
+  aktarılıyor, yorumlama userspace'e bırakıldı.
+- `CARFIELD_MBOX_UNIT_SIZE` (0x800, id 0-7'yi kapsıyor) donanımın gerçek
+  toplam adres alanı büyüklüğünün TEYİTLİ bir değeri değil, sadece
+  kullandığımız id aralığını kapsayan minimal bir pencere.
+
+**Test durumu:**
+- ✅ Register-math testi (`tests/mbox_reg_test.c`, saf gcc, kernel/FPGA
+  gerektirmiyor) yazıldı ve MinGW gcc ile bu oturumda PASS (Windows'ta
+  çalıştırıldı, doğrulandı).
+- ⏳ `mock_ot_test` regresyonu (spec §5.1) — kod değişmedi ama gerçek
+  kernelde YENİDEN DERLENİP çalıştırılmadı bu oturumda (Windows'ta gerçek
+  kernel build ortamı yok, carfield-VM gerekiyor).
+- ⏳ `insmod real_mbox=1` yükleme testi (spec §5.3) — carfield-VM'de HENÜZ
+  ÇALIŞTIRILMADI.
+- ⏳ `mock_ot=1 real_mbox=1` guard testi (spec §5.4) — HENÜZ ÇALIŞTIRILMADI.
+- Bu üçü de sıradaki oturumun/kullanıcının VM'de yapması gereken ilk iş.
+
+**Değiştirilen/eklenen dosyalar:** `driver/carfield_mbox_hw.c/.h` (yeni),
+`driver/carfield_mock_ot.h/.c` (+`carfield_mock_ot_requested()`),
+`driver/carfield.c` (ioctl backend seçimi + init/exit), `driver/Makefile`
+(+`carfield_mbox_hw.o`), `tests/mbox_reg_test.c` (yeni) + `tests/Makefile`,
+`docs/QUESTIONS_FOR_TEAM.md` (madde 8 eklendi, LETTER1 satırı düzeltildi),
+`docs/MOCK_OT_SPEC.md` (§8 IRQ 58 netleştirildi), `carfield_mbox_sim/README.md`
+(yeni, "superseded/regression testbed" notu).
+
+**Why:** Kullanıcı yarın Daniele ile FPGA seansına "derleniyor mu" değil
+"register yazımı çalışıyor mu" sorusuyla başlamak istiyor; bu gecelik iş
+register haritasını/doorbell mantığını gerçek kernel koduna taşıdı. IRQ 58
+kaynağı bulunduktan sonra hem SEND (doorbell) hem RECEIVE (completion IRQ)
+yolu kod seviyesinde tam — ikisi de gerçek FPGA'da henüz hiç çalıştırılmadı.
+
+**How to apply:** Sıradaki oturumda önce carfield-VM'de derleme + spec §5'in
+3 test adımını (regresyon, insmod real_mbox=1, guard testi) çalıştır. Spec
+DoD'sinin geri kalanı (register map, mutual exclusion, unknowns'ın
+parametrize edilmesi, README güncellemesi) bu oturumda tamamlandı. IRQ 58
+artık `docs/QUESTIONS_FOR_TEAM.md` madde 8'de çözüldü olarak işaretli,
+tekrar "teyitsiz" diye sunma.
 
 ## Repo
 

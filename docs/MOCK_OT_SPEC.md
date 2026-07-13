@@ -80,7 +80,7 @@ Fill a buffer with a known pattern → full-transfer ioctl → verify **every pa
 |---|---|
 | Phys addrs in header/map are independently resolvable and readable | OT's interconnect can reach those DDR addresses / address-view translation |
 | Write-back through phys addrs lands in the pinned user buffer (`FOLL_WRITE`) | Cache coherence CVA6↔OT (flush-before-doorbell question) |
-| `fpo/fps/lps` geometry is honored end to end | Real mailbox register semantics (doorbell/completion wiring, IRQ 58) |
+| `fpo/fps/lps` geometry is honored end to end | Real mailbox register semantics actually working on silicon (doorbell write observed, completion IRQ 58 fires and demuxes correctly) -- register map and IRQ number are confirmed (`docs/QUESTIONS_FOR_TEAM.md` item 8), just not yet exercised against real hardware |
 | Timeout, error, release/unpin paths under a live consumer | 32-bit fit of real Carfield RAM; real OT firmware behavior/perf |
 
 Report wording: "validated end-to-end against a software mock implementing the ratified contract" — never just "validated".

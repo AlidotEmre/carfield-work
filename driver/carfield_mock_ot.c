@@ -140,6 +140,11 @@ bool carfield_mock_ot_enabled(void)
 	return mock_chan.thread != NULL;
 }
 
+bool carfield_mock_ot_requested(void)
+{
+	return mock_ot != 0;
+}
+
 /* ── Validation (MOCK_OT_SPEC.md §5) ─────────────────────────────────────── */
 
 static u32 carfield_mock_ot_validate(u32 magic, u32 dsz, u32 nop, u32 fpo,
