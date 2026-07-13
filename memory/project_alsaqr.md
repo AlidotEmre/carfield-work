@@ -396,17 +396,17 @@ geri yazma modelinin gerçek donanımı temsil etmediği (zaten
 `carfield_mock_ot.c`/`demo.py` docstring'lerinde disclaimer'lı) bir kez
 daha doğrulanmış oldu — **değiştirilecek bir şey yok, sadece teyit.**
 
-**YENİ BULGU — kodda düzeltilmemiş gerçek bug, `MBOX_LETTER1` yanlış
-offset'te:** `carfield_mbox.h` (`carfield_mbox_sim` reposu) satır 46
-hâlâ `#define MBOX_LETTER1 0x8C` — üstünde `"!!! VERIFY... expected
-offset would be 0x84... confirm against RTL"` yorumuyla. Gerçek mbox.h
-zaten 2026-07-06'da geldi ve doğru değer (**0x84**) bu dosyanın yukarıdaki
-"Daniele'den Yeni Mail" bölümüne işlendi — ama koddaki yer tutucu hiç
-güncellenmedi. Simülasyon kendi kendine tutarlı olduğu için testler PASS
-veriyor (host ve mock aynı yanlış offset'i kullanıyor), gerçek donanıma
-bağlanıldığında `letter1` (komut/status) yanlış register'a gidecekti —
-klasik "sim'de PASS, FPGA'da çöp" senaryosu. **Düzeltme tek satır**
-(`0x8C` → `0x84`), henüz uygulanmadı, kullanıcı onayı bekleniyor.
+**`MBOX_LETTER1` bug — DÜZELTİLDİ (2026-07-09, bu dosyaya geç işlendi 2026-07-13):**
+`carfield_mbox.h` (`carfield_mbox_sim` reposu) satır 46'daki
+`#define MBOX_LETTER1 0x8C` (yanlış, üstünde `"!!! VERIFY..."` yorumu
+vardı) gerçek `mbox.h`'den doğrulanan değere (**0x84**) düzeltildi.
+`carfield_mbox_sim` commit `e5708e6` ("fix: correct MBOX_LETTER1 offset
+from guessed 0x8C to confirmed 0x84"), `origin/main`'e push edildi,
+`./test_mbox` PASS. Bu satır önceden "henüz uygulanmadı, onay bekleniyor"
+diyordu — bu, [[feedback-memory-sync]]'in tarif ettiği türden bir
+belgeleme gecikmesiydi (fix ayrı bir repoda yapıldığı için bu dosyaya
+hiç yansımamıştı), global hafıza taramasında (2026-07-13) fark edilip
+buraya işlendi.
 
 **YENİ BELİRSİZLİK — L2 bölge sayısı çelişkisi:** `driver/carfield.c`
 mmap tablosu 4 ayrı 1 MiB L2 bölgesi tanımlıyor
@@ -441,9 +441,8 @@ sayısı sorusu bir sonraki oturumun ilk maddeleri olmalı (aşağıdaki
 
 ## Sıradaki Oturum Başlangıç Noktası (2026-07-09 itibarıyla güncellendi)
 
-1. **`MBOX_LETTER1` bugfix** — `carfield_mbox_sim/carfield_mbox.h:46`,
-   `0x8C` → `0x84`. Tek satır, kanıt hazır (gerçek `mbox.h`), kullanıcı
-   onayı bekleniyor — bkz. yukarı "YENİ BULGU".
+1. ~~`MBOX_LETTER1` bugfix~~ ✅ bitti (`carfield_mbox_sim` commit `e5708e6`,
+   `0x8C` → `0x84`, push edildi, test PASS) — bkz. yukarı.
 2. ~~carfield_mbox.c rework~~ ✅ bitti (commit `a28ad6d`) — Çelişki 1
    ÇÖZÜLDÜ, `INT_SND_SET` kullanımı DOĞRU teyit edildi, dokunmaya gerek yok.
 3. ~~mock_mmio/pulp_sim güncellemesi~~ ✅ bitti (`opentitan_sim.c` +
