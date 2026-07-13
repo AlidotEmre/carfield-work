@@ -588,8 +588,12 @@ yolu kod seviyesinde tam — ikisi de gerçek FPGA'da henüz hiç çalıştırı
 3 test adımını (regresyon, insmod real_mbox=1, guard testi) çalıştır. Spec
 DoD'sinin geri kalanı (register map, mutual exclusion, unknowns'ın
 parametrize edilmesi, README güncellemesi) bu oturumda tamamlandı. IRQ 58
-artık `docs/QUESTIONS_FOR_TEAM.md` madde 8'de çözüldü olarak işaretli,
-tekrar "teyitsiz" diye sunma.
+`docs/QUESTIONS_FOR_TEAM.md` madde 8'de kodda kullanılıyor olarak işaretli
+ama **kullanıcı 2026-07-13'te Daniele ile FPGA toplantısında bunun canlı
+teyit edilmesini istedi** — `car_lib_mbox.h`'deki "çürütülmedi" kaynağı
+`INT_SND_SET` doorbell'ı gibi doğrudan bir Daniele teyidi değil. Toplantı
+sonrası Daniele açıkça onaylarsa/reddederse buraya ve
+`QUESTIONS_FOR_TEAM.md` madde 8'e işlensin.
 
 ## Repo
 

@@ -123,11 +123,19 @@ bağlantılı, ikisi birlikte netleşecek.
 
 ---
 
-## 8. Mailbox completion IRQ'unun PLIC source ID'si — ÇÖZÜLDÜ (2026-07-13), 58
+## 8. Mailbox completion IRQ'unun PLIC source ID'si — 58, TOPLANTIDA CANLI TEYİT İSTENİYOR
 
 `HOST_MBOX_IRQ 58`, Daniele'nin gerçek `car_lib_mbox.h` dosyasında tanımlı
-(kaynak doğrulandı) — `CARFIELD_MBOX_IRQ` artık `58`, `request_irq()`
-gerçek FPGA'da canlı çalışacak.
+— `CARFIELD_MBOX_IRQ` kodda şimdiden `58` olarak kullanılıyor, `request_irq()`
+gerçek FPGA'da bu numarayla canlı çalışacak.
+
+**Ama bu kaynak "çürütülmedi" seviyesinde kabul edildi, Daniele'nin
+`INT_SND_SET` doorbell'ı için verdiği gibi doğrudan/pozitif bir teyit
+değil.** Toplantıda Daniele'den açıkça doğrulanmalı:
+- `HOST_MBOX_IRQ 58` gerçekten host'un mailbox 5/7 completion'ları için
+  kullanacağı PLIC source ID mi?
+- Aynı dosyadaki `HOST_TO_CLUSTER_MBOX`/`CLUSTER_MBOX_EVT` gibi eski/dead
+  bir tanım değil, hâlâ geçerli mi?
 
 - Etkilenen kod: `driver/carfield_mbox_hw.c` — `CARFIELD_MBOX_IRQ = 58`.
 
