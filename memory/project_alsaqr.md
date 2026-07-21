@@ -595,6 +595,35 @@ teyit edilmesini istedi** — `car_lib_mbox.h`'deki "çürütülmedi" kaynağı
 sonrası Daniele açıkça onaylarsa/reddederse buraya ve
 `QUESTIONS_FOR_TEAM.md` madde 8'e işlensin.
 
+## FPGA/Daniele Seansı Ertelendi (2026-07-21)
+
+07-14 için planlanan FPGA/Daniele seansı (bkz. "Mailbox Hardware Backend
+Entegrasyonu" bölümü, IRQ 58'in canlı teyidi bekleniyordu) **henüz
+gerçekleşmedi**. Repo'da 07-13'ten beri commit yok — bu, drift değil,
+bilinen bir bekleme durumu.
+
+**Erteleme sebebi:** Daniele'nin kendi makinesinde çıkan bir JTAG sorunu +
+Daniele'nin mezuniyeti. Kullanıcının tahmini: bu hafta sonuna kadar
+(~2026-07-24/26) ilerlemiş olacak — kesin tarih değil, tahmin.
+
+**Yeni plan:** Kullanıcı bu hafta içinde projeyi gerçek donanıma
+deploy edip denemeyi düşünüyor. Bu, `docs/QUESTIONS_FOR_TEAM.md`'nin hâlâ
+açık maddelerinin (IRQ 58 canlı teyidi, L2 bölge sayısı, sonuç dönüş yolu,
+EU register API) bu hafta içinde netleşmesine bağlı — Daniele'nin
+seansından önce donanıma geçilirse bu varsayımlar hâlâ doğrulanmamış
+olarak kalır.
+
+**Why:** 2026-07-21'de yapılan kapsamlı repo incelemesi (her `.md` +
+tüm driver/pyiface/test kodu satır satır okunarak) sırasında son commit'in
+8 gün önce olduğu ve Daniele'nin Torino seyahatiyle çakıştığı fark edildi,
+kullanıcıya soruldu.
+
+**How to apply:** Bu haftaki deploy denemesinden önce, yukarıdaki açık
+sorularla ilgili yeni bir Daniele cevabı gelip gelmediğini kontrol et.
+Gelmediyse, gerçek donanım denemesi sırasında bu varsayımların (özellikle
+IRQ 58 ve doorbell register semantiği) hâlâ teyitsiz olduğunu kullanıcıya
+hatırlat, sessizce "çözüldü" gibi sunma.
+
 ## Repo
 
 GitHub: https://github.com/AlidotEmre/carfield-work
