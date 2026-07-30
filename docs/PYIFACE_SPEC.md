@@ -39,7 +39,7 @@ tests/
 
   **Corrected from v1:** v1's mapping table (`ETIMEDOUT→CarfieldTimeout`, `EILSEQ→CarfieldBadHeader`, `EINVAL→CarfieldBadRequest`, `ERANGE→CarfieldAddressRange`, `E2BIG→CarfieldSizeError`) was incomplete and, worse, two of its errnos are reused by the driver for unrelated failures on the *same* ioctl:
   - `-EFAULT` is both `CARFIELD_MOCK_OT_ERR_MAP`'s mapped errno (`carfield_mock_ot.c:132`) **and** what `copy_from_user`/`copy_to_user` return on a bad pointer (`carfield.c:290-291,306,317`) — inside the *same* `CARFIELD_MOCK_OT_XFORM` call. Per-op scoping alone doesn't separate these two, because they're the same op. Fix: `device.py` pre-fills `mock_status` with `CARFIELD_MOCK_OT_STATUS_NONE` (`0xFFFFFFFF`, already defined in `carfield_mock_ot.h:34` for exactly this "no reply happened" purpose) before the ioctl call. `fcntl.ioctl()` mutates the passed buffer in place whenever `copy_to_user` succeeded, regardless of the ioctl's return value — so on catching `EFAULT`, checking whether `mock_status` is still the sentinel or was overwritten with a real status distinguishes "copy fault, request never even reached the mock" from "mock rejected on `ERR_MAP`".
-  - `-ENXIO` is both `CARFIELD_MOCK_OT_ERR_MAP_ENTRY`'s mapped errno and what `CARFIELD_CLUSTER_RUN` returns when `soc_ctrl`/`int_cluster` aren't `ioremap`'d (`carfield.c:204-206`) — different ioctls, so per-op scoping does separate these two correctly.
+  - `-ENXIO` was both `CARFIELD_MOCK_OT_ERR_MAP_ENTRY`'s mapped errno and what `CARFIELD_CLUSTER_RUN` returned when `soc_ctrl`/`int_cluster` weren't `ioremap`'d (`carfield.c:204-206` at the time) — different ioctls, so per-op scoping separated these two correctly. **Post-2026-07-30 note:** `CARFIELD_CLUSTER_RUN` no longer touches `soc_ctrl`/`int_cluster` at all (see below), so this specific collision no longer exists; `cluster_run`'s errno set is now the same host<->OT seam as `xform`'s.
   - Missing from v1 entirely: `EBADMSG` (`ERR_GEOMETRY`), `EIO` (`mock_force_err` / unrecognized status, `carfield_mock_ot.c:134`), `ENODEV` (`CARFIELD_MOCK_OT_XFORM` when `mock_ot=0`, `carfield.c:288`). All added to the per-op table below.
 
   | Op | errno | Exception |
@@ -55,16 +55,19 @@ tests/
   | `xform` | `EFAULT` (`ERR_MAP`, status populated — see sentinel check above) | `CarfieldBadHeader` |
   | `xform` | `ENXIO` (`ERR_MAP_ENTRY`) | `CarfieldBadHeader` |
   | `xform` | `EIO` (`mock_force_err` / unknown) | `CarfieldMockError` |
-  | `cluster_run` | `ENXIO` (hardware not mapped) | `CarfieldNoHardware` |
-  | `cluster_run` | `EINVAL` (`num_cores` too large) | `CarfieldBadRequest` |
-  | `cluster_run` | `ETIMEDOUT` (EOC timeout) | `CarfieldTimeout` |
+  | `cluster_run` | `ENODEV` (neither `mock_ot` nor `real_mbox` enabled) | `CarfieldNotAvailable` |
+  | `cluster_run` | `ETIMEDOUT` (OT wait_completion timeout) | `CarfieldTimeout` |
+  | `cluster_run` | `EILSEQ`/`EBADMSG`/`EFAULT`/`ENXIO` (`mock_force_err` only — `CLUSTER_BOOT` has no header/map to actually fail validation on) | `CarfieldBadHeader`/`CarfieldGeometryError`/`CarfieldBadHeader`/`CarfieldBadHeader` |
+  | `cluster_run` | `EIO` (`mock_force_err` / unknown) | `CarfieldMockError` |
+
+  **Post-implementation addendum (2026-07-30):** `CARFIELD_CLUSTER_RUN` was reworked from a direct `soc_ctrl`/`int_cluster` register-poke into a host<->OT mailbox notification (same seam as `xform`, see `carfield_mock_ot.h`'s `CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT`) — the host cannot boot the cluster directly (Daniele's code review, see `project_alsaqr.md`). The `num_cores` field and the old `ENXIO`/`EINVAL` rows above no longer apply; the table above reflects the new error set. `cluster_run()`'s signature dropped `num_cores` accordingly (see §4).
 
 ## 4. device.py — CarfieldDevice
 
 - Context manager (`with CarfieldDevice() as d:`); explicit `.close()`; opening fails with a clear message if the module isn't loaded.
 - **Buffers:** allocated via `mmap.mmap(-1, size)` (anonymous, page-aligned). The object must be held referenced for the full ioctl duration (document the GC hazard). Address obtained via `ctypes.addressof(ctypes.c_char.from_buffer(m))`.
 - Provide an intentionally misaligned view helper (`buf, addr = d.alloc(size, offset=n)`) so the `fpo != 0` path is exercisable from Python.
-- **Shared internal helper, one public method per op** (see R1 correction): `_ioctl(request_code, ctypes_struct_instance) -> ctypes_struct_instance` does the `fcntl.ioctl` call and raises the mapped `CarfieldError`. On top of it: `ping(value)`, `cluster_run(boot_addr, num_cores=0)`, `paging_test(addr, size)` (debug/test-only), and — because `paging_test`/`xform` (and, later, `load_model`/`run_inference`) all share the "pin `[addr, addr+size)`, get geometry back" shape — a private `_paging_op(ioctl_code, req_type, addr, size, **extra_fields)` that both `paging_test()` and `xform()` (in `demo.py`) build on, so the pack/unpack dance isn't duplicated per op.
+- **Shared internal helper, one public method per op** (see R1 correction): `_ioctl(request_code, ctypes_struct_instance) -> ctypes_struct_instance` does the `fcntl.ioctl` call and raises the mapped `CarfieldError`. On top of it: `ping(value)`, `cluster_run(boot_addr)` (see 2026-07-30 addendum above — `num_cores` dropped), `paging_test(addr, size)` (debug/test-only), and — because `paging_test`/`xform` (and, later, `load_model`/`run_inference`) all share the "pin `[addr, addr+size)`, get geometry back" shape — a private `_paging_op(ioctl_code, req_type, addr, size, **extra_fields)` that both `paging_test()` and `xform()` (in `demo.py`) build on, so the pack/unpack dance isn't duplicated per op.
 - `paging_test`/`xform` raise mapped exceptions per §3's per-op table; return the driver's output fields on success.
 
 ## 5. demo.py — mock-only surface

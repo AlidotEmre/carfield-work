@@ -42,6 +42,8 @@ Map page: one 4 KB page, physically below 4 GB, holding `nop` consecutive `u32` 
 
 Doorbell: `letter0 = header_phys`, `letter1 = command` (define `CMD_XFORM = 0x0001` for now). Reply: `letter1 = status` (0 = OK, else error code from §5), `letter0` echoed.
 
+**Post-implementation addendum (2026-07-30):** a second command, `CMD_CLUSTER_BOOT = 0x0002`, was added for `CARFIELD_CLUSTER_RUN` (cluster boot notification, see `carfield_mock_ot.h`). It reuses this same doorbell/reply transport but `letter0` is a raw L2 physical address, not a `header_phys` -- there is no header/map to validate, so none of §5's rules apply to it. The mock's handling of it is intentionally trivial: ack with `status=0` (still subject to `mock_force_err`/`mock_no_reply`/`mock_delay_ms`), since what OpenTitan actually does to boot the cluster is out of scope/black box for this driver (Daniele's code review; see `memory/project_alsaqr.md`).
+
 ## 4. Happy-path behavior
 
 On doorbell with `CMD_XFORM`: validate per §5; walk the payload exactly as §3 defines it; apply the transform **XOR each payload byte with `0x5A`** in place (writes go back through the mock's own mapping of the data pages — this is the write-back proof); reply `status=0`; signal completion.

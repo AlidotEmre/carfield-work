@@ -279,7 +279,7 @@ static u32 carfield_mock_ot_process(u32 header_phys)
 static int carfield_mock_ot_thread_fn(void *arg)
 {
 	while (!kthread_should_stop()) {
-		u32 header_phys, cmd, status;
+		u32 letter0, cmd, status;
 
 		wait_event_interruptible(mock_chan.doorbell_wq,
 			mock_chan.doorbell_pending || kthread_should_stop());
@@ -287,34 +287,36 @@ static int carfield_mock_ot_thread_fn(void *arg)
 		if (kthread_should_stop())
 			break;
 
-		header_phys = mock_chan.letter0_req;
+		letter0 = mock_chan.letter0_req;
 		cmd = mock_chan.letter1_req;
-		(void)cmd; /* part of the doorbell letters; nothing to dispatch
-			    * on yet, see the comment below */
 		mock_chan.doorbell_pending = false;	/* ack/reset doorbell */
 
 		if (mock_delay_ms > 0)
 			msleep(mock_delay_ms);
 
 		if (mock_no_reply) {
-			pr_info("carfield_mock_ot: mock_no_reply=1, swallowing request (header_phys=0x%x)\n",
-				header_phys);
+			pr_info("carfield_mock_ot: mock_no_reply=1, swallowing request (letter0=0x%x)\n",
+				letter0);
 			continue;	/* no completion signaled -> host times out */
 		}
 
-		/*
-		 * CMD_XFORM is the only command MOCK_OT_SPEC.md defines, so
-		 * there is nothing to dispatch on yet -- cmd is read (it's
-		 * part of the doorbell letters) but not branched on. When a
-		 * second command exists, switch on it here instead of
-		 * guessing at an error code for "unknown" ahead of need.
-		 */
-		if (mock_force_err)
+		if (mock_force_err) {
 			status = mock_force_err;
-		else
-			status = carfield_mock_ot_process(header_phys);
+		} else if (cmd == CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT) {
+			/*
+			 * CLUSTER_BOOT's letter0 is a raw L2 phys addr, not a
+			 * carfield_mbox_header -- there is no header/map to
+			 * validate here. What OT actually does to boot the
+			 * cluster from it is out of scope (black box, see
+			 * project_alsaqr.md); the mock can only ack that the
+			 * transport delivered the request.
+			 */
+			status = CARFIELD_MOCK_OT_OK;
+		} else {
+			status = carfield_mock_ot_process(letter0);
+		}
 
-		mock_chan.letter0_reply = header_phys;
+		mock_chan.letter0_reply = letter0;
 		mock_chan.letter1_reply = status;
 		mock_chan.completion_pending = true;
 		wake_up_interruptible(&mock_chan.completion_wq);

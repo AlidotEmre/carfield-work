@@ -19,8 +19,12 @@
  *       --remove-section .bss_l1      \
  *       hello.elf
  *
- * The Linux driver loads this binary to L2 (0x78000000) and sets the
- * cluster boot address to ELF_BOOT_ADDR before asserting BOOT_ENABLE + FETCH_ENABLE.
+ * The Linux driver loads this binary to L2 (0x78000000) and notifies
+ * OpenTitan to boot the cluster from it (CARFIELD_CLUSTER_RUN) -- the
+ * host can no longer boot the cluster directly (asserting BOOT_ENABLE/
+ * FETCH_ENABLE itself); OpenTitan is the one that does so, and how is
+ * out of scope/black box for the host driver (Daniele's 2026-07-30 code
+ * review, see memory/project_alsaqr.md).
  */
 
 #include <stdio.h>

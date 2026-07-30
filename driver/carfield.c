@@ -40,20 +40,19 @@
 #define SPATZ_CLUSTER_PHYS   0x51000000UL
 #define SPATZ_CLUSTER_SIZE   0x800000
 
-/* ── PULP cluster control register offsets (relative to soc_ctrl base) ─── */
-/* from carfield/sw/include/regs/soc_ctrl.h */
-#define PULP_FETCH_ENABLE_OFF  0xC0
-#define PULP_BOOT_ENABLE_OFF   0xDC
+/*
+ * PULP cluster control register offsets (relative to soc_ctrl base), from
+ * carfield/sw/include/regs/soc_ctrl.h. PULP_BOOT_ENABLE_OFF/FETCH_ENABLE_OFF
+ * and the int_cluster boot-address/return-value offsets used to be written
+ * directly by CARFIELD_CLUSTER_RUN -- removed 2026-07-30 along with the
+ * soc_ctrl/int_cluster kernel ioremap that served them, now that booting the
+ * cluster is OpenTitan's job, not the host's (see CARFIELD_CLUSTER_RUN's
+ * handler below and memory/project_alsaqr.md). PULP_BUSY_OFF/PULP_EOC_OFF
+ * were already unused before that (superseded by the EOC IRQ below) and are
+ * kept only as register-map documentation.
+ */
 #define PULP_BUSY_OFF          0xE4
 #define PULP_EOC_OFF           0xE8
-
-/* Boot address registers inside the cluster peripheral */
-/* car_integer_cluster + 0x200000 (periph) + 0x000000 (ctrl unit) + 0x40 */
-#define INT_CLUSTER_BOOT_ADDR_OFF  0x200040
-/* Return value from cluster */
-#define INT_CLUSTER_RETURN_OFF     0x200100
-
-#define INT_CLUSTER_NUM_CORES      12
 
 /*
  * PULP cluster's eoc_o signal reaches the host (Cheshire) as intr_ext_i[0]
@@ -64,8 +63,8 @@
  * headers or confirmation from Daniele, same as the mailbox topology).
  *
  * 0 is not a valid IRQ number, so request_irq() below fails safely and
- * non-fatally (same tolerance as the ioremap regions above) until this
- * is filled in with the real PLIC source ID.
+ * non-fatally (same tolerance carfield_mbox_hw.c's ioremap uses) until
+ * this is filled in with the real PLIC source ID.
  */
 #define CARFIELD_EOC_IRQ           0
 
@@ -87,10 +86,6 @@ struct carfield_dev {
 static dev_t          dev_num;
 static struct class  *carfield_class;
 static struct carfield_dev cdev_data;
-
-/* ioremap'd pointers — NULL if hardware not present */
-static void __iomem  *soc_ctrl;
-static void __iomem  *int_cluster;
 
 /* set once request_irq(CARFIELD_EOC_IRQ, ...) succeeds, so carfield_exit()
  * knows whether there is anything to free_irq() */
@@ -193,59 +188,69 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 		break;
 	}
 
-	/* ── Phase 2: boot PULP cluster and wait for EOC ─────────────── */
+	/* ── Phase 2: notify OpenTitan to boot the PULP cluster ──────────
+	 *
+	 * The host used to poke soc_ctrl/int_cluster registers directly to
+	 * boot the cluster. Per Daniele's 2026-07-30 code review, the host
+	 * cannot reach the cluster directly -- OpenTitan is the one that
+	 * boots it, and how it does so is out of scope/black box here (see
+	 * memory/project_alsaqr.md). This case now only does the host<->OT
+	 * notification, reusing the exact same seam as
+	 * CARFIELD_MOCK_OT_XFORM below, just with CARFIELD_MOCK_OT_CMD_
+	 * CLUSTER_BOOT and no paging chain (boot_addr is already a raw L2
+	 * physical address, not a userspace-pinned buffer needing
+	 * page_to_phys translation).
+	 *
+	 * OPEN QUESTION (docs/QUESTIONS_FOR_TEAM.md): is this mailbox
+	 * completion (mbox7, OT -> host) the same signal as "cluster
+	 * finished running", or only "OT accepted the boot request"? The
+	 * pre-existing carfield_eoc_isr/CARFIELD_EOC_IRQ hardware-IRQ path
+	 * (cluster's own eoc_o signal, independent of OT) is left untouched
+	 * below -- it is no longer waited on here, but it isn't known yet
+	 * whether it's superseded by this mailbox reply or still needed as
+	 * a separate completion signal.
+	 */
 	case CARFIELD_CLUSTER_RUN: {
 		struct carfield_cluster_run req;
-		void __iomem *boot_reg;
-		int i;
-		long left;
-		u32 num_cores;
+		u32 letter0, letter1;
+		bool use_hw = carfield_mbox_hw_enabled();
+		int ret;
 
-		if (!soc_ctrl || !int_cluster) {
-			pr_err("carfield: hardware regions not mapped\n");
-			return -ENXIO;
-		}
+		if (!use_hw && !carfield_mock_ot_enabled())
+			return -ENODEV;
 
 		if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
 			return -EFAULT;
 
-		num_cores = req.num_cores ? req.num_cores : INT_CLUSTER_NUM_CORES;
-		if (num_cores > INT_CLUSTER_NUM_CORES) {
-			pr_err("carfield: num_cores=%u exceeds INT_CLUSTER_NUM_CORES=%d\n",
-			       num_cores, INT_CLUSTER_NUM_CORES);
-			return -EINVAL;
+		if (use_hw)
+			carfield_mbox_hw_send(req.boot_addr, CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT);
+		else
+			carfield_mock_ot_send(req.boot_addr, CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT);
+
+		ret = use_hw ? carfield_mbox_hw_wait_completion(CARFIELD_EOC_TIMEOUT_MS)
+			     : carfield_mock_ot_wait_completion(CARFIELD_EOC_TIMEOUT_MS);
+		if (ret) {
+			req.result = CARFIELD_MOCK_OT_STATUS_NONE;
+			if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+				return -EFAULT;
+			return ret;
 		}
 
-		/* Write boot address for each core */
-		boot_reg = int_cluster + INT_CLUSTER_BOOT_ADDR_OFF;
-		for (i = 0; i < num_cores; i++)
-			writel(req.boot_addr, boot_reg + i * 4);
+		if (use_hw)
+			carfield_mbox_hw_read_reply(&letter0, &letter1);
+		else
+			carfield_mock_ot_read_reply(&letter0, &letter1);
+		(void)letter0; /* echoed boot_addr, nothing to cross-check it
+				* against here */
 
-		/* Reset the flag before releasing the cluster so an EOC that
-		 * fires between here and wait_event below isn't missed. */
-		cdev_data.wq_flag = 0;
-
-		/* Release cluster: assert BOOT_ENABLE then FETCH_ENABLE */
-		writel(1, soc_ctrl + PULP_BOOT_ENABLE_OFF);
-		writel(1, soc_ctrl + PULP_FETCH_ENABLE_OFF);
-
-		/* Wait for the EOC interrupt (carfield_eoc_isr) instead of
-		 * busy-polling PULP_EOC_OFF. */
-		left = wait_event_interruptible_timeout(cdev_data.wq,
-				cdev_data.wq_flag,
-				msecs_to_jiffies(CARFIELD_EOC_TIMEOUT_MS));
-		if (left < 0)
-			return left; /* interrupted by a signal */
-		if (left == 0) {
-			pr_err("carfield: cluster EOC timeout\n");
-			return -ETIMEDOUT;
-		}
-
-		req.result = readl(int_cluster + INT_CLUSTER_RETURN_OFF);
-
+		req.result = letter1;
 		if (copy_to_user((void __user *)arg, &req, sizeof(req)))
 			return -EFAULT;
-		break;
+
+		if (use_hw)
+			return 0; /* real OT status semantics unknown, see XFORM's
+				   * identical caveat above */
+		return carfield_mock_ot_status_to_errno(letter1);
 	}
 
 	/* ── Paging chain test: pin/build/release, no mailbox/FPGA ─────── */
@@ -412,15 +417,6 @@ static int __init carfield_init(void)
 	init_waitqueue_head(&cdev_data.wq);
 	cdev_data.wq_flag = 0;
 
-	/* ioremap hardware regions — non-fatal if running without FPGA */
-	soc_ctrl = ioremap(SOC_CTRL_PHYS, SOC_CTRL_SIZE);
-	if (!soc_ctrl)
-		pr_warn("carfield: ioremap soc_ctrl failed (no hardware?)\n");
-
-	int_cluster = ioremap(INT_CLUSTER_PHYS, INT_CLUSTER_SIZE);
-	if (!int_cluster)
-		pr_warn("carfield: ioremap int_cluster failed (no hardware?)\n");
-
 	/*
 	 * CARFIELD_EOC_IRQ is a placeholder (see its definition) until the
 	 * real PLIC source ID is known. 0 reliably fails as "invalid/busy"
@@ -486,11 +482,6 @@ static void __exit carfield_exit(void)
 
 	if (eoc_irq_requested)
 		free_irq(CARFIELD_EOC_IRQ, &cdev_data);
-
-	if (soc_ctrl)
-		iounmap(soc_ctrl);
-	if (int_cluster)
-		iounmap(int_cluster);
 
 	device_destroy(carfield_class, dev_num);
 	cdev_del(&cdev_data.cdev);

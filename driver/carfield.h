@@ -37,15 +37,27 @@ struct carfield_ping {
 
 /*
  * CARFIELD_CLUSTER_RUN: load binary into L2 (via mmap), then issue this
- * IOCTL to set the boot address, release reset, and wait for EOC.
+ * IOCTL to notify OpenTitan to boot the PULP cluster from boot_addr.
+ *
+ * The host cannot boot the cluster directly -- OpenTitan is the only
+ * thing that can, and how it does so is out of scope for the host driver
+ * (Daniele's 2026-07-30 code review; see memory/project_alsaqr.md). This
+ * ioctl's job is just the host<->OT notification, over the same
+ * letter0/letter1 mailbox seam as CARFIELD_MOCK_OT_XFORM (see
+ * carfield_mock_ot.h's CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT).
+ *
+ * num_cores was dropped from this struct: booting the cluster is now
+ * entirely OpenTitan's business (black box), so how many cores to
+ * release is no longer something the host decides.
  *
  * boot_addr : physical L2 address where ELF entry point lives (e.g. 0x78000000)
- * num_cores : cores to boot; 0 means all 12
- * result    : return value written by the cluster (output field)
+ * result    : OT's reply status word (output field). OPEN QUESTION
+ *             (docs/QUESTIONS_FOR_TEAM.md): unconfirmed whether this same
+ *             reply also means "cluster finished running", or only "OT
+ *             accepted the boot request" -- treated as the former for now.
  */
 struct carfield_cluster_run {
 	__u32 boot_addr;
-	__u32 num_cores;
 	__u32 result;
 };
 

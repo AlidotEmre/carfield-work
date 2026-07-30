@@ -624,6 +624,74 @@ Gelmediyse, gerçek donanım denemesi sırasında bu varsayımların (özellikle
 IRQ 58 ve doorbell register semantiği) hâlâ teyitsiz olduğunu kullanıcıya
 hatırlat, sessizce "çözüldü" gibi sunma.
 
+## Cluster Boot Mimarisi Değişti — Host Artık Cluster'ı Doğrudan Boot Edemiyor (2026-07-30)
+
+Daniele ile online bir code review yapıldı (FPGA seansı hâlâ gerçekleşmedi,
+onun yerine). Kullanıcı, `tests/cluster_test.c`'de binary L2'ye yüklendikten
+sonraki kısma (eski satır 86 civarı) kaba bir not düşmüştü: "notify
+OpenTitan instead of PULP cluster". Bunun arkasındaki mimari gerçek:
+**PULP cluster "aptal" bir yapı, L2 belleğe (ya da host'a) doğrudan
+ulaşamıyor — araya OT giriyor.** Yeni akış: HOST (Linux/CVA6) L2 belleğe
+yazar (bu kısım değişmedi, mmap ile aynı şekilde), sonra **PULP cluster'ı
+değil OT'yi notify eder**, OT de cluster'ı boot eder.
+
+Daniele'nin netleştirdiği (ve kasıtlı olarak sınır çizdiği) nokta: **"OT
+boots the cluster [is] out of scope, since you are developing the
+interaction between host and OT you can consider black box everything
+that's in charge of OT."** Yani host driver'ın sorumluluğu artık sadece
+host<->OT bildirişimi — OT'nin cluster'ı nasıl boot ettiği (hangi
+register, hangi mekanizma) tamamen host driver'ın ilgi alanı dışında.
+
+**Sonuç olarak kodda yapılan değişiklik (bu oturumda uygulandı):**
+- `driver/carfield.c`'deki `CARFIELD_CLUSTER_RUN` case'i artık
+  `soc_ctrl`/`int_cluster` register'larına doğrudan `writel` yapmıyor —
+  bunun yerine `CARFIELD_MOCK_OT_XFORM` ile AYNI host<->OT mailbox
+  seam'ini (`carfield_mock_ot_send`/`wait_completion`/`read_reply`, ya da
+  `real_mbox=1` altında `carfield_mbox_hw_*` eşdeğerleri) kullanarak OT'ye
+  `CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT` (yeni komut, `carfield_mock_ot.h`)
+  gönderiyor. `boot_addr` (L2 fiziksel adresi) `letter0`'a gidiyor, paging
+  zinciri YOK (boot_addr zaten çıplak bir fiziksel adres, kullanıcı
+  buffer'ı pinlemek gerekmiyor).
+- **`num_cores` alanı struct'tan tamamen kaldırıldı** (kullanıcının
+  kararı) — cluster'ı boot etmek artık tamamen OT'nin işi olduğuna göre,
+  kaç core'un çalışacağı da artık host'un karar vereceği bir şey değil.
+- Artık gereksiz kalan `soc_ctrl`/`int_cluster` kernel `ioremap`'i ve
+  `PULP_BOOT_ENABLE_OFF`/`PULP_FETCH_ENABLE_OFF`/
+  `INT_CLUSTER_BOOT_ADDR_OFF`/`INT_CLUSTER_RETURN_OFF`/
+  `INT_CLUSTER_NUM_CORES` define'ları `carfield.c`'den silindi (userspace
+  mmap tablosu, `CARFIELD_MMAP_SOC_CTRL`/`INT_CLUSTER`, ayrı bir mekanizma
+  olduğu için DOKUNULMADI — hâlâ geçerli).
+- Mock kthread (`carfield_mock_ot.c`) `CLUSTER_BOOT` komutunu artık
+  tanıyor — header/map validasyonu YOK (böyle bir şey yok bu komut için),
+  sadece transport'u test etmek amacıyla anında `OK` ile ack ediyor
+  (`mock_force_err`/`mock_no_reply`/`mock_delay_ms` hâlâ geçerli).
+- `pyiface/abi.py`/`device.py`, `tests/cluster_test.c`, `docs/PYIFACE_SPEC.md`,
+  `docs/MOCK_OT_SPEC.md`, `sw/pulp_hello.c` yorumları hep bu yeni modele
+  göre güncellendi.
+
+**AÇIK KALAN SORU (kasıtlı, çözülmedi — bkz. `docs/QUESTIONS_FOR_TEAM.md`
+madde 9):** Cluster'ın işini bitirdiğini host nasıl öğrenecek? Kullanıcının
+kendi tahmini (KESİN DEĞİL): muhtemelen mbox7 (OT→host) üzerinden, çünkü
+cluster zaten host'la doğrudan konuşamıyor. Ama bu teyit edilmedi — mbox7
+cevabı "OT boot isteğini kabul etti" mi yoksa "cluster fiilen bitti" mi
+anlamına geliyor, belirsiz. Mevcut donanımsal EOC IRQ yolu
+(`carfield_eoc_isr`/`CARFIELD_EOC_IRQ`, madde 2) **bilinçli olarak
+dokunulmadan bırakıldı** — artık `CARFIELD_CLUSTER_RUN` onu beklemiyor ama
+silinmedi de, çünkü hâlâ ayrı/tamamlayıcı bir sinyal olma ihtimali var.
+
+**Neden önemli:** Bu, projenin en temel varsayımlarından birini
+(host'un cluster'ı doğrudan kontrol ettiği) tersine çeviriyor — madde
+2 ve 3'teki eski "PULP Event Unit üzerinden host'tan tetikleme" sorusu da
+bu yüzden artık host driver'ı ilgilendirmiyor (OT'nin/PULP'un kendi
+işi). FPGA seansı hâlâ gerçekleşmedi; bu bilgi ondan ÖNCE, ayrı bir online
+code review'dan geldi.
+
+**Nasıl uygulanır:** Cluster boot ile ilgili hiçbir yeni kod/öneri host'un
+cluster registerlarına dokunacak şekilde yazılmamalı — her şey host<->OT
+mailbox seam'i üzerinden gitmeli. Completion sinyali netleşmeden (madde 9)
+`carfield_eoc_isr`/`CARFIELD_EOC_IRQ` "ölü kod" diye silinmemeli veya
+"artık kullanılmıyor" diye sunulmamalı — hâlâ açık bir olasılık.
+
 ## Repo
 
 GitHub: https://github.com/AlidotEmre/carfield-work

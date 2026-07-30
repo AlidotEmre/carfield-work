@@ -1,12 +1,23 @@
 /*
- * Phase 2 test: load a binary into L2 via mmap, boot the PULP cluster,
- * wait for EOC, and print the return value.
+ * Phase 2 test: load a binary into L2 via mmap, notify OpenTitan to boot
+ * the PULP cluster from it, and print OT's reply status.
+ *
+ * The host no longer boots the cluster directly -- per Daniele's
+ * 2026-07-30 code review, OpenTitan is the only thing that can, and how
+ * it does so is out of scope/black box here (see
+ * memory/project_alsaqr.md). This test only exercises the host<->OT
+ * notification (CARFIELD_CLUSTER_RUN), same as CARFIELD_MOCK_OT_XFORM's
+ * seam. Whether OT's reply also means "cluster finished running", or
+ * only "OT accepted the boot request", is still an open question
+ * (docs/QUESTIONS_FOR_TEAM.md) -- this test cannot currently tell the
+ * two apart.
  *
  * Usage:
  *   ./cluster_test <binary.bin>
  *
  * <binary.bin> is the stripped ELF / raw binary of pulp_hello compiled
  * with pulp-runtime. Without FPGA hardware this test will fail at mmap().
+ * Requires the module loaded with mock_ot=1 or real_mbox=1.
  */
 
 #include <stdio.h>
@@ -84,9 +95,9 @@ int main(int argc, char *argv[])
 	free(bin_buf);
 	printf("Loaded %ld bytes to L2 (phys 0x%08X)\n", st.st_size, L2_PHYS);
 
-	/* Boot cluster */
+	/* Notify OpenTitan to boot the cluster from L2_PHYS -- the host
+	 * cannot boot it directly (see file header comment). */
 	req.boot_addr = L2_PHYS;
-	req.num_cores = 0;   /* all 12 cores */
 	req.result    = 0;
 
 	if (ioctl(fd, CARFIELD_CLUSTER_RUN, &req) < 0) {
@@ -94,12 +105,12 @@ int main(int argc, char *argv[])
 		goto out_unmap;
 	}
 
-	printf("Cluster finished. Return value: %u\n", req.result);
+	printf("OT replied. Status: %u\n", req.result);
 	if (req.result == 0) {
 		printf("PASS\n");
 		rc = 0;
 	} else {
-		printf("FAIL (non-zero return)\n");
+		printf("FAIL (non-zero OT status)\n");
 	}
 
 out_unmap:

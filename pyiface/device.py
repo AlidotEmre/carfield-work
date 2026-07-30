@@ -71,21 +71,23 @@ class CarfieldDevice:
         return req
 
     def _map_error(self, op, errnum, req):
-        """Most (op, errno) pairs map cleanly via abi.exception_for(). The
-        one exception: CARFIELD_MOCK_OT_XFORM's -EFAULT is ambiguous by
-        construction (carfield_mock_ot.c's ERR_MAP maps to the same errno
+        """Most (op, errno) pairs map cleanly via abi.exception_for(). Two
+        exceptions, both from the same host<->OT seam: CARFIELD_MOCK_OT_XFORM
+        and CARFIELD_CLUSTER_RUN's -EFAULT is ambiguous by construction
+        (carfield_mock_ot.c's ERR_MAP maps to the same errno
         copy_from_user/copy_to_user use) -- see PYIFACE_SPEC.md §3. The
         driver mutates the ioctl buffer in place whenever copy_to_user
         succeeded, regardless of the ioctl's return value, so checking
-        whether mock_status still holds the sentinel we pre-filled it
+        whether the reply field still holds the sentinel we pre-filled it
         with tells us which -EFAULT this was.
         """
-        if op == "xform" and errnum == errno.EFAULT:
-            if getattr(req, "mock_status", None) == abi.CARFIELD_MOCK_OT_STATUS_NONE:
+        if errnum == errno.EFAULT and op in ("xform", "cluster_run"):
+            reply_field = "mock_status" if op == "xform" else "result"
+            if getattr(req, reply_field, None) == abi.CARFIELD_MOCK_OT_STATUS_NONE:
                 return abi.CarfieldTransportError(
                     op,
                     errnum,
-                    "copy_from_user/copy_to_user failed before the mock ever saw the request",
+                    "copy_from_user/copy_to_user failed before OT ever saw the request",
                 )
         return abi.exception_for(op, errnum)
 
@@ -107,12 +109,20 @@ class CarfieldDevice:
         self._ioctl("ping", abi.CARFIELD_PING, req)
         return req.echo
 
-    def cluster_run(self, boot_addr, num_cores=0):
-        """CARFIELD_CLUSTER_RUN: boot the PULP cluster at boot_addr and
-        wait for EOC. num_cores=0 means all INT_CLUSTER_NUM_CORES cores.
-        Returns the cluster's result register."""
+    def cluster_run(self, boot_addr):
+        """CARFIELD_CLUSTER_RUN: notify OpenTitan to boot the PULP cluster
+        from boot_addr (already loaded into L2). The host cannot boot the
+        cluster directly -- OpenTitan is the only thing that can, and how
+        it does so is out of scope/black box here (Daniele's 2026-07-30
+        code review, see project_alsaqr.md). Returns OT's raw reply status
+        word.
+
+        OPEN QUESTION (docs/QUESTIONS_FOR_TEAM.md): unconfirmed whether
+        this reply also means "cluster finished running", or only "OT
+        accepted the boot request".
+        """
         req = abi.CarfieldClusterRun(
-            boot_addr=boot_addr, num_cores=num_cores, result=0
+            boot_addr=boot_addr, result=abi.CARFIELD_MOCK_OT_STATUS_NONE
         )
         self._ioctl("cluster_run", abi.CARFIELD_CLUSTER_RUN, req)
         return req.result

@@ -46,6 +46,19 @@ Carfield SoC için Linux kernel driver yazıyor. Proje başlangıcı: 22 Haziran
    tahsisleri `GFP_DMA32` ile yapılır, `& 0xFFFFFFFF` ile sessiz kırpma YOK
 4. User belleği pin'lenmeli — `pin_user_pages_fast()` ile (`get_user_pages()`
    değil; `unpin_user_pages()` ile eşleşir)
+5. **Host, PULP cluster'ı DOĞRUDAN boot edemez/kontrol edemez — araya OT
+   girer (2026-07-30, Daniele code review).** Cluster'a host'tan doğrudan
+   register yazımı (`soc_ctrl`/`int_cluster` poke, EU üzerinden tetikleme
+   vb.) önerme/yazma — bu artık geçersiz bir model. Host'un işi sadece
+   host<->OT mailbox bildirişimi (`CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT`,
+   bkz. `carfield_mock_ot.h`); OT'nin cluster'ı nasıl boot ettiği tamamen
+   black box, host driver'ın ilgi alanı dışında (Daniele: "you can
+   consider black box everything that's in charge of OT"). Detay:
+   `memory/project_alsaqr.md` "Cluster Boot Mimarisi Değişti" bölümü.
+   **Açık kalan soru:** cluster'ın işi bittiğini host'a kim/nasıl bildirir
+   (mbox7 mi, ayrı EOC IRQ mu) — netleşmeden `carfield_eoc_isr`/
+   `CARFIELD_EOC_IRQ`'yu silme veya "kullanılmıyor" diye sunma (bkz.
+   `docs/QUESTIONS_FOR_TEAM.md` madde 9).
 
 ## Referans Dosyalar
 

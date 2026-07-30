@@ -73,24 +73,24 @@ CARFIELD_PING = _iowr(CARFIELD_MAGIC, 0, CarfieldPing)  # carfield.h:20
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: CARFIELD_CLUSTER_RUN -- carfield.h:46-52
+# Phase 2: CARFIELD_CLUSTER_RUN -- carfield.h. Notifies OpenTitan to boot
+# the PULP cluster from boot_addr; the host cannot boot it directly
+# (Daniele's 2026-07-30 code review, see project_alsaqr.md) -- same
+# host<->OT mailbox seam as CARFIELD_MOCK_OT_XFORM below, just with
+# CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT and no paging chain.
 # ---------------------------------------------------------------------------
 class CarfieldClusterRun(ctypes.Structure):
     _fields_ = [
-        ("boot_addr", ctypes.c_uint32),  # carfield.h:47
-        ("num_cores", ctypes.c_uint32),  # carfield.h:48
-        ("result", ctypes.c_uint32),  # carfield.h:49
+        ("boot_addr", ctypes.c_uint32),  # carfield.h:boot_addr
+        ("result", ctypes.c_uint32),  # carfield.h:result -- OT's reply status word
     ]
 
 
-assert ctypes.sizeof(CarfieldClusterRun) == 12, (
+assert ctypes.sizeof(CarfieldClusterRun) == 8, (
     "CarfieldClusterRun drifted from carfield.h struct carfield_cluster_run -- header changed?"
 )
 
-CARFIELD_CLUSTER_RUN = _iowr(CARFIELD_MAGIC, 1, CarfieldClusterRun)  # carfield.h:52
-
-# carfield.c:55 -- num_cores above this makes CARFIELD_CLUSTER_RUN return -EINVAL
-INT_CLUSTER_NUM_CORES = 12
+CARFIELD_CLUSTER_RUN = _iowr(CARFIELD_MAGIC, 1, CarfieldClusterRun)  # carfield.h
 
 
 # ---------------------------------------------------------------------------
@@ -236,10 +236,6 @@ class CarfieldMockError(CarfieldError):
     pass
 
 
-class CarfieldNoHardware(CarfieldError):
-    pass
-
-
 # ---------------------------------------------------------------------------
 # Per-op errno -> exception tables (PYIFACE_SPEC.md §3). Deliberately not
 # one global table: the same errno means different things depending on
@@ -269,10 +265,20 @@ _XFORM_ERRNOS = {
     _errno.EIO: CarfieldMockError,  # mock_force_err / unknown status, carfield_mock_ot.c:134
 }
 
+# Same host<->OT seam as xform (carfield.c's CARFIELD_CLUSTER_RUN case,
+# reworked 2026-07-30) -- no paging chain here (boot_addr is a raw phys
+# addr, not a pinned user buffer), so _XFORM_ERRNOS's paging-specific
+# EINVAL/E2BIG/ERANGE don't apply. EILSEQ/EBADMSG/EFAULT/ENXIO are only
+# reachable via mock_force_err in practice, since CLUSTER_BOOT has no
+# header/map to actually fail validation on (carfield_mock_ot.c).
 _CLUSTER_RUN_ERRNOS = {
-    _errno.ENXIO: CarfieldNoHardware,  # carfield.c:204-206, soc_ctrl/int_cluster not mapped
-    _errno.EINVAL: CarfieldBadRequest,  # carfield.c:212-216, num_cores too large
-    _errno.ETIMEDOUT: CarfieldTimeout,  # carfield.c:238-241, EOC wait timeout
+    _errno.ENODEV: CarfieldNotAvailable,  # neither mock_ot nor real_mbox enabled
+    _errno.ETIMEDOUT: CarfieldTimeout,  # OT wait_completion timeout
+    _errno.EILSEQ: CarfieldBadHeader,
+    _errno.EBADMSG: CarfieldGeometryError,
+    _errno.EFAULT: CarfieldBadHeader,
+    _errno.ENXIO: CarfieldBadHeader,
+    _errno.EIO: CarfieldMockError,
 }
 
 ERRNO_TABLES = {
