@@ -705,6 +705,26 @@ mailbox seam'i üzerinden gitmeli. Completion sinyali netleşmeden (madde 9)
 `carfield_eoc_isr`/`CARFIELD_EOC_IRQ` "ölü kod" diye silinmemeli veya
 "artık kullanılmıyor" diye sunulmamalı — hâlâ açık bir olasılık.
 
+**carfield-VM'de doğrulandı (2026-07-31):** `git pull` + `driver/` içinde
+`make` + `sudo insmod carfield-mod.ko mock_ot=1` sonrası
+`sudo ./tests/cluster_test /bin/ls` → `Loaded 138216 bytes to L2`, OT
+mailbox seam'i üzerinden **PASS**. Yol boyunca iki ayrı kullanıcı hatası
+düzeltildi (repo'nun kendisiyle ilgisiz): ilk denemede `<binary.bin>`
+yer tutucusu literal yazılıp bash'in `<`/`>` yönlendirme operatörleriyle
+karışması, sonra `tests/cluster_test` binary'sinin (git'te izlenmiyor,
+`.gitignore`'da) eski `carfield.h` ile derlenmiş kalması ve yeni ioctl
+numarasıyla uyuşmaması (`num_cores` düşünce struct boyutu 12→8 byte
+değişti) — `tests/` içinde `make clean && make cluster_test` ile
+çözüldü. **Bu, cluster-boot-notify değişikliğinin gerçek kernelde uçtan
+uca ilk doğrulanmasıdır** (önceki turda sadece kod incelemesi/tasarımdı).
+
+**How to apply:** Cluster boot notify yolunu tekrar "sadece kod, test
+edilmedi" diye sunma — `mock_ot=1` altında gerçek kernelde PASS aldı.
+Gelecekte driver header'ı (`carfield.h`) değiştiren her session'da
+`tests/` altındaki binary'lerin `.gitignore`'da olduğunu ve `git pull`
+sonrası MUTLAKA yeniden derlenmesi gerektiğini hatırlat — sessiz ioctl
+numarası uyuşmazlığı (`ENOTTY`) bu projede artık bilinen bir tuzak.
+
 ## Repo
 
 GitHub: https://github.com/AlidotEmre/carfield-work
