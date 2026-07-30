@@ -113,6 +113,13 @@ olacak, Daniele toplantıda gösterecek. Mailbox'ta PULP'a giden hiçbir şey ka
 sadece PULP→host bildirimi (mbox 5) mailbox'ta duruyor. `CARFIELD_CLUSTER_RUN`
 zaten mailbox'tan bağımsızdı ama EOC sinyalleşmesinin de ileride EU'ya kayması olası.
 
+**ARTIK GEÇERSİZ (2026-07-30 code review'a bkz. aşağıdaki "Cluster Boot
+Mimarisi Değişti" bölümü):** `CARFIELD_CLUSTER_RUN`'ın "mailbox'tan
+bağımsız" olduğu bilgisi tersine döndü — artık TAM OLARAK host<->OT
+mailbox seam'i üzerinden çalışıyor (register-poke tamamen kaldırıldı).
+Bu paragrafı yalnızca 2026-06 tarihli tarihsel bağlamıyla oku, güncel
+mimariyi yansıtmıyor.
+
 **LETTER0/LETTER1 offset belirsizliği önemini kaybediyor:** Daniele, register
 offsetleriyle (LETTER0=0x80, LETTER1=0x8C şüphesi) uğraşmamıza gerek olmadığını,
 bunların low-level API'lerle birlikte sağlanacağını söyledi. → Register-access
@@ -224,7 +231,11 @@ teyitli değil.
     entegre değil — şu an iki paralel parça olarak duruyor (biri gerçek
     kernel/ioremap kullanıyor, diğeri mock MMIO + userspace pthread).
   - 🆕 PULP'a komuta mailbox yok, Event Unit (EU) kullanılacak — henüz
-    başlanmadı, Daniele toplantıda gösterecek.
+    başlanmadı, Daniele toplantıda gösterecek. **GÜNCELLEME (2026-07-30):**
+    Daniele'nin ayrı code review'daki cevabına göre cluster'ı OT boot
+    ediyor ve bu host driver için black box — host-side EU entegrasyonu
+    artık planlanmıyor (bkz. aşağıdaki "Cluster Boot Mimarisi Değişti" ve
+    `docs/QUESTIONS_FOR_TEAM.md` madde 3).
   - ✅ Mock OpenTitan consumer (kthread tabanlı, `MOCK_OT_SPEC.md`) yazıldı
     ve **gerçek kernelde (carfield-VM) uçtan uca doğrulandı** (2026-07-06)
     — bkz. aşağıdaki "Mock OpenTitan Consumer — Gerçek Kernel Testi" bölümü.
@@ -460,10 +471,12 @@ sayısı sorusu bir sonraki oturumun ilk maddeleri olmalı (aşağıdaki
 6. **Sonuç dönüş yolu (host mu, L2'de mi kalıyor)** — Daniele bilinçli
    erteledi, zorlamaya gerek yok, ama gerçek op tasarımından önce netleşmesi
    şart.
-7. PULP Event Unit (EU) — henüz başlanmadı; `hal/eu/eu_v3.h` (pulp-sdk,
-   cluster-side HAL) referans olabilir ama host-side entegrasyon ayrı iş.
-   Artık kesin: mbox 6/EVT 22 yok, EU tek yol — Daniele'nin canlı
-   gösterimini bekliyor.
+7. ~~PULP Event Unit (EU)~~ **KAPANDI (2026-07-30):** host-side EU
+   entegrasyonu artık gerekmiyor — Daniele'nin ayrı code review'daki
+   cevabına göre cluster'ı OT boot ediyor, host için tamamen black box
+   (bkz. "Cluster Boot Mimarisi Değişti" bölümü). `hal/eu/eu_v3.h`
+   (pulp-sdk, cluster-side HAL) hâlâ geçerli olabilir ama bu artık
+   PULP/OT tarafının konusu, host driver'ın değil.
 
 ## Mailbox Hardware Backend Entegrasyonu (2026-07-13) — kod tarafı bitti, FPGA'da hiç test edilmedi
 
