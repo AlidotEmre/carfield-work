@@ -773,6 +773,28 @@ Lokalinde: `~/carfield-work` — yeni cihazda `git clone` + symlink (README'de a
 
 ---
 
+## CARFIELD_MOCK_OT_XFORM → CARFIELD_OT_XFORM rename — carfield-VM'de doğrulandı (2026-07-31)
+
+Bir önceki oturumda yapılan rename (`CARFIELD_MOCK_OT_XFORM`/`carfield_mock_ot_req`/
+`CARFIELD_MOCK_OT_CMD_XFORM`/`CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT`/
+`CARFIELD_MOCK_OT_STATUS_NONE`/`mock_status` → `CARFIELD_OT_XFORM`/
+`carfield_ot_xform_req`/`CARFIELD_OT_CMD_XFORM`/`CARFIELD_OT_CMD_CLUSTER_BOOT`/
+`CARFIELD_OT_STATUS_NONE`/`ot_status`, commit `380f098`) + README.md güncellemesi
+carfield-VM'de `git pull` + `driver/`+`tests/` `make clean && make` +
+`mock_ot=1` altında uçtan uca doğrulandı:
+
+- `mbox_reg_test` — PASS (rename'e dokunmuyor, register-offset aritmetiği)
+- `mock_ot_test` — **all cases PASS** (yeniden adlandırılan `carfield_ot_xform_req`/
+  `CARFIELD_OT_XFORM`'u C tarafında doğrudan egzersiz eden test)
+- `test_pyiface.py` — **10/10 PASS** (Python tarafı: `CarfieldOtXformReq`, `ot_status`)
+- `sudo dmesg` hem `insmod` hem `rmmod` sonrası temiz — Bad-page/BUG/leak uyarısı yok
+
+**Why:** Rename bir önceki oturumda yalnızca kod incelemesi + `abi.py`'nin bağımsız
+Python import'uyla doğrulanmıştı, gerçek kernelde hiç çalıştırılmamıştı.
+
+**How to apply:** Bu rename'i tekrar "sadece kod, test edilmedi" diye sunma —
+hem C hem Python tarafı gerçek kernelde PASS aldı, unload de temiz.
+
 ## Önemli Kaynaklar
 
 - Carfield repo: https://github.com/pulp-platform/carfield
