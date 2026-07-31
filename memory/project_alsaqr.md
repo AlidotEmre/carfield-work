@@ -725,6 +725,47 @@ Gelecekte driver header'ı (`carfield.h`) değiştiren her session'da
 sonrası MUTLAKA yeniden derlenmesi gerektiğini hatırlat — sessiz ioctl
 numarası uyuşmazlığı (`ENOTTY`) bu projede artık bilinen bir tuzak.
 
+## CARFIELD_CLUSTER_LOAD (contiguous host-DRAM staging) — PARKED, sonuca bağlandı (2026-07-31)
+
+Ayrı bir oturumda, bir `NEW_CLUSTER_LOAD_SPEC.md` brief'ine dayanarak
+`driver/carfield_l2.c/.h` + `CARFIELD_CLUSTER_LOAD`/`CARFIELD_CLUSTER_LOAD_FREE`
+ioctl'leri eklenip local'de commit edilmişti (`dma_alloc_coherent` ile
+contiguous host-DRAM buffer'a binary stage edip fiziksel adresini OT'ye
+mailbox'la yollama modeli). Push'tan önce `origin/main`'in ayrı, daha yeni
+bir online Daniele code review'una (`46d88af`/`9e0440f`/`f38fc9a`) dayanarak
+ilerlediği görüldü ve ilk bakışta iki kaynak çelişiyor gibiydi.
+
+**Çözüldü — gerçek bir çelişki değilmiş:** Kullanıcının netleştirdiği gerçek
+akış şu: (1) host → L2'ye binary'i **yazar** (mmap+memcpy, mailbox değil,
+zaten var olan `tests/cluster_test.c` mekanizması), (2) host → OT'ye
+"boot_addr'de binary hazır" der (**mailbox**, sadece adres/sinyal — bu artık
+`CARFIELD_CLUSTER_RUN`'ın kendisi), (3) OT cluster'ı boot eder (black box),
+(4) OT → host'a EOC bildirir (mailbox, madde 9'da hâlâ açık). Bu akışta
+host'un ayrıca bir "contiguous host-DRAM staging buffer"a ihtiyacı yok —
+L2 mmap penceresi zaten gerçek bir fiziksel MMIO/SRAM penceresi olduğu için
+baştan contiguous, ve `pgprot_noncached` olduğu için cache-coherence sorusu
+da yok. Yani `NEW_CLUSTER_LOAD_SPEC.md`'nin çözmeye çalıştığı sorun aslında
+zaten mevcut mekanizmayla (mmap-yazma + mailbox-notify, ikisi de ayrı ayrı
+zaten var) çözülmüş durumdaydı — spec'in kendi "Q-A: L2 gerçek DMA-RAM mı
+sabit SRAM penceresi mi?" sorusunun cevabı "sabit SRAM penceresi" çıktı,
+sadece ilk uygulamada yanlış şubesi (host-DRAM staging) seçilmişti.
+
+Tüm ilgili dosyalar (`tests/cluster_test.c`, `sw/pulp_hello.c`,
+`docs/MOCK_OT_SPEC.md`, `docs/PYIFACE_SPEC.md`, `docs/QUESTIONS_FOR_TEAM.md`)
+tek tek kontrol edildi — başka bir çelişki bulunmadı, spec'in diğer açık
+soruları (L2 boyutu madde 6'da, tamamlanma sinyali madde 9'da) zaten ayrı
+oturum tarafından takip ediliyor.
+
+**Karar:** `main` origin'in haliyle bırakıldı, `CARFIELD_CLUSTER_LOAD`
+tekrar uygulanmadı. Çalışma silinmedi — `backup/cluster-load-20cad10`
+dalında duruyor (commit `20cad10`), arşiv amaçlı saklanıyor.
+
+**How to apply:** Bu konuyu tekrar açık soru olarak sunma, kapandı. `main`'de
+binary'nin L2'ye ulaşma yolu hâlâ sadece `mmap`+`memcpy`
+(`CARFIELD_MMAP_L2_INTL_0`) — "contiguous DMA staging'e taşındı" deme.
+`backup/cluster-load-20cad10`'u "ölü kod" diye silmeyi önerme, bilinçli
+arşiv.
+
 ## Repo
 
 GitHub: https://github.com/AlidotEmre/carfield-work

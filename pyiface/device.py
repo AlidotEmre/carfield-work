@@ -72,7 +72,7 @@ class CarfieldDevice:
 
     def _map_error(self, op, errnum, req):
         """Most (op, errno) pairs map cleanly via abi.exception_for(). Two
-        exceptions, both from the same host<->OT seam: CARFIELD_MOCK_OT_XFORM
+        exceptions, both from the same host<->OT seam: CARFIELD_OT_XFORM
         and CARFIELD_CLUSTER_RUN's -EFAULT is ambiguous by construction
         (carfield_mock_ot.c's ERR_MAP maps to the same errno
         copy_from_user/copy_to_user use) -- see PYIFACE_SPEC.md §3. The
@@ -82,8 +82,8 @@ class CarfieldDevice:
         with tells us which -EFAULT this was.
         """
         if errnum == errno.EFAULT and op in ("xform", "cluster_run"):
-            reply_field = "mock_status" if op == "xform" else "result"
-            if getattr(req, reply_field, None) == abi.CARFIELD_MOCK_OT_STATUS_NONE:
+            reply_field = "ot_status" if op == "xform" else "result"
+            if getattr(req, reply_field, None) == abi.CARFIELD_OT_STATUS_NONE:
                 return abi.CarfieldTransportError(
                     op,
                     errnum,
@@ -122,7 +122,7 @@ class CarfieldDevice:
         accepted the boot request".
         """
         req = abi.CarfieldClusterRun(
-            boot_addr=boot_addr, result=abi.CARFIELD_MOCK_OT_STATUS_NONE
+            boot_addr=boot_addr, result=abi.CARFIELD_OT_STATUS_NONE
         )
         self._ioctl("cluster_run", abi.CARFIELD_CLUSTER_RUN, req)
         return req.result

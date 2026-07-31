@@ -71,7 +71,7 @@
 /* EOC wait timeout, replaces the old busy-poll iteration count */
 #define CARFIELD_EOC_TIMEOUT_MS    5000
 
-/* How long CARFIELD_MOCK_OT_XFORM waits for the mock kthread's reply --
+/* How long CARFIELD_OT_XFORM waits for the mock kthread's reply --
  * comfortably longer than any reasonable mock_delay_ms test value, so a
  * real -ETIMEDOUT only happens for mock_no_reply (or a wedged mock). */
 #define CARFIELD_MOCK_OT_TIMEOUT_MS 2000
@@ -196,8 +196,8 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 	 * boots it, and how it does so is out of scope/black box here (see
 	 * memory/project_alsaqr.md). This case now only does the host<->OT
 	 * notification, reusing the exact same seam as
-	 * CARFIELD_MOCK_OT_XFORM below, just with CARFIELD_MOCK_OT_CMD_
-	 * CLUSTER_BOOT and no paging chain (boot_addr is already a raw L2
+	 * CARFIELD_OT_XFORM below, just with CARFIELD_OT_CMD_CLUSTER_BOOT
+	 * and no paging chain (boot_addr is already a raw L2
 	 * physical address, not a userspace-pinned buffer needing
 	 * page_to_phys translation).
 	 *
@@ -223,14 +223,14 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 			return -EFAULT;
 
 		if (use_hw)
-			carfield_mbox_hw_send(req.boot_addr, CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT);
+			carfield_mbox_hw_send(req.boot_addr, CARFIELD_OT_CMD_CLUSTER_BOOT);
 		else
-			carfield_mock_ot_send(req.boot_addr, CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT);
+			carfield_mock_ot_send(req.boot_addr, CARFIELD_OT_CMD_CLUSTER_BOOT);
 
 		ret = use_hw ? carfield_mbox_hw_wait_completion(CARFIELD_EOC_TIMEOUT_MS)
 			     : carfield_mock_ot_wait_completion(CARFIELD_EOC_TIMEOUT_MS);
 		if (ret) {
-			req.result = CARFIELD_MOCK_OT_STATUS_NONE;
+			req.result = CARFIELD_OT_STATUS_NONE;
 			if (copy_to_user((void __user *)arg, &req, sizeof(req)))
 				return -EFAULT;
 			return ret;
@@ -292,15 +292,17 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 	 * unchanged from the mock-only version; only which three functions
 	 * it calls differs.
 	 *
-	 * NOTE: reusing the CARFIELD_MOCK_OT_XFORM name/struct for real
-	 * hardware traffic is a naming smell inherited from the spec this
-	 * was implemented against ("wire the hw backend into the existing
-	 * mock_ot channel abstraction without touching its callers") -- flag
-	 * for a rename once the real backend is more than a same-night FPGA
-	 * smoke test.
+	 * Renamed from CARFIELD_MOCK_OT_XFORM (2026-07-31): the old name
+	 * baked "mock" into a struct/ioctl that was already carrying real
+	 * hardware traffic whenever real_mbox=1 -- see
+	 * memory/project_alsaqr.md for the rename. The mock kthread's own
+	 * implementation (carfield_mock_ot.c: send/wait_completion/
+	 * read_reply/status_to_errno, the CARFIELD_MOCK_OT_ERR_* status
+	 * codes, the mock_* module params) correctly keeps "mock" in its
+	 * name -- only the shared ioctl-facing symbols moved.
 	 */
-	case CARFIELD_MOCK_OT_XFORM: {
-		struct carfield_mock_ot_req req;
+	case CARFIELD_OT_XFORM: {
+		struct carfield_ot_xform_req req;
 		struct carfield_paging_handle h;
 		u32 letter0, letter1;
 		bool use_hw = carfield_mbox_hw_enabled();
@@ -318,9 +320,9 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 			return ret;
 
 		if (use_hw)
-			carfield_mbox_hw_send(h.header_phys, CARFIELD_MOCK_OT_CMD_XFORM);
+			carfield_mbox_hw_send(h.header_phys, CARFIELD_OT_CMD_XFORM);
 		else
-			carfield_mock_ot_send(h.header_phys, CARFIELD_MOCK_OT_CMD_XFORM);
+			carfield_mock_ot_send(h.header_phys, CARFIELD_OT_CMD_XFORM);
 
 		ret = use_hw ? carfield_mbox_hw_wait_completion(CARFIELD_MOCK_OT_TIMEOUT_MS)
 			     : carfield_mock_ot_wait_completion(CARFIELD_MOCK_OT_TIMEOUT_MS);
@@ -329,7 +331,7 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 			 * pages either way so this never leaks, then report
 			 * the failure. */
 			carfield_paging_release(&h);
-			req.mock_status = CARFIELD_MOCK_OT_STATUS_NONE;
+			req.ot_status = CARFIELD_OT_STATUS_NONE;
 			if (copy_to_user((void __user *)arg, &req, sizeof(req)))
 				return -EFAULT;
 			return ret;
@@ -343,7 +345,7 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 				* it against here -- h is about to be released */
 		carfield_paging_release(&h);
 
-		req.mock_status = letter1;
+		req.ot_status = letter1;
 		if (copy_to_user((void __user *)arg, &req, sizeof(req)))
 			return -EFAULT;
 
@@ -358,7 +360,7 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 			 * silently mislabel it as one of the mock's own
 			 * meanings. Report success-of-transport (a reply
 			 * arrived) and hand the raw value to userspace via
-			 * mock_status for now; revisit once Daniele's session
+			 * ot_status for now; revisit once Daniele's session
 			 * clarifies real status codes.
 			 */
 			return 0;

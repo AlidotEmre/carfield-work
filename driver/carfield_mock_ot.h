@@ -18,7 +18,7 @@
  */
 
 /* Doorbell command word (MOCK_OT_SPEC.md §3) */
-#define CARFIELD_MOCK_OT_CMD_XFORM	0x0001
+#define CARFIELD_OT_CMD_XFORM	0x0001
 
 /*
  * CLUSTER_BOOT: host -> OT notification that a binary is loaded in L2 at
@@ -29,7 +29,7 @@
  * CARFIELD_CLUSTER_RUN (carfield.h) instead of the old direct
  * soc_ctrl/int_cluster register pokes.
  */
-#define CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT	0x0002
+#define CARFIELD_OT_CMD_CLUSTER_BOOT	0x0002
 
 /* Reply status codes (MOCK_OT_SPEC.md §5) -- distinct values so the host can
  * map each to a distinct errno (see carfield_mock_ot_status_to_errno()). */
@@ -41,9 +41,9 @@
 #define CARFIELD_MOCK_OT_ERR_MAP	5
 #define CARFIELD_MOCK_OT_ERR_MAP_ENTRY	6
 
-/* Sentinel written into carfield_mock_ot_req.mock_status when the ioctl
+/* Sentinel written into carfield_ot_xform_req.ot_status when the ioctl
  * returns without ever getting a reply (mock_no_reply, or a signal). */
-#define CARFIELD_MOCK_OT_STATUS_NONE	0xFFFFFFFFu
+#define CARFIELD_OT_STATUS_NONE	0xFFFFFFFFu
 
 #ifdef __KERNEL__
 
@@ -88,18 +88,18 @@ int carfield_mock_ot_status_to_errno(u32 status);
 /*
  * Builds the paging chain over [user_addr, user_addr + user_size) exactly
  * like CARFIELD_PAGING_TEST, then actually sends it to the mock OT consumer
- * and waits for the reply. mock_status is the raw §5 status code (0 = OK);
+ * and waits for the reply. ot_status is the raw §5 status code (0 = OK);
  * the ioctl's own return value is the errno-mapped version of the same
  * thing, or -ENODEV if mock_ot=0, or -ETIMEDOUT if the mock never replied.
  */
-struct carfield_mock_ot_req {
+struct carfield_ot_xform_req {
 	__u64 user_addr;
 	__u64 user_size;
 
-	__u32 mock_status;
+	__u32 ot_status;
 };
 
-#define CARFIELD_MOCK_OT_XFORM \
-	_IOWR(CARFIELD_MAGIC, 3, struct carfield_mock_ot_req)
+#define CARFIELD_OT_XFORM \
+	_IOWR(CARFIELD_MAGIC, 3, struct carfield_ot_xform_req)
 
 #endif /* CARFIELD_MOCK_OT_H */

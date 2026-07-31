@@ -43,8 +43,8 @@ struct carfield_ping {
  * thing that can, and how it does so is out of scope for the host driver
  * (Daniele's 2026-07-30 code review; see memory/project_alsaqr.md). This
  * ioctl's job is just the host<->OT notification, over the same
- * letter0/letter1 mailbox seam as CARFIELD_MOCK_OT_XFORM (see
- * carfield_mock_ot.h's CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT).
+ * letter0/letter1 mailbox seam as CARFIELD_OT_XFORM (see
+ * carfield_mock_ot.h's CARFIELD_OT_CMD_CLUSTER_BOOT).
  *
  * num_cores was dropped from this struct: booting the cluster is now
  * entirely OpenTitan's business (black box), so how many cores to

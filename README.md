@@ -13,9 +13,19 @@ Python (user space)
     │ ioctl
     ▼
 /dev/carfield  ← BU DRIVER (senin işin)
-    ├── Mailbox ──▶ PULP Cluster  (Giovanni + Daniele)
-    └── Mailbox ──▶ OpenTitan     (Luca + Francesco + Tina)
+    ├── mmap ────────▶ L2 bellek (cluster binary'si doğrudan yazılır)
+    └── Mailbox ─────▶ OpenTitan   (Luca + Francesco + Tina)
+                          │  (black box — host'un ilgi alanı dışında)
+                          ▼
+                      PULP Cluster (Giovanni + Daniele)
 ```
+
+**Önemli (2026-07-30, Daniele code review):** Host PULP cluster'ı ARTIK
+doğrudan boot edemiyor/kontrol edemiyor — sadece OpenTitan'ı mailbox ile
+bilgilendiriyor ("binary L2'de şu adreste hazır"), cluster'ı gerçekte OT
+boot ediyor, nasıl yaptığı host driver'ı ilgilendirmiyor (black box). Detay:
+`memory/project_alsaqr.md` "Cluster Boot Mimarisi Değişti" bölümü,
+`CLAUDE.md` madde 5.
 
 ---
 
@@ -88,19 +98,53 @@ carfield-work/
 │   └── project_alsaqr.md
 ├── driver/                 ← kernel driver kodu (Aşama 0'dan itibaren)
 │   ├── carfield.c/.h           ← /dev/carfield, IOCTL'ler, mmap, EOC IRQ
-│   ├── carfield_paging.c/.h    ← header/map page zinciri, pin/unpin
+│   ├── carfield_paging.c/.h    ← header/map page zinciri, pin/unpin (scattered veri transferi)
 │   ├── carfield_paging_math.c  ← sayfa-düzeni matematiği (kernel'siz derlenir)
-│   └── carfield_mock_ot.c/.h   ← mock OpenTitan consumer (kthread)
+│   ├── carfield_mock_ot.c/.h   ← mock OpenTitan consumer (kthread) + host<->OT ioctl/cmd sözleşmesi
+│   │                              (CARFIELD_OT_XFORM, CARFIELD_OT_CMD_XFORM/CLUSTER_BOOT — hem mock
+│   │                              hem gerçek donanım backend'i bunları paylaşır)
+│   └── carfield_mbox_hw.c/.h   ← GERÇEK mailbox donanım backend'i (real_mbox=1), aynı seam'in
+│                                  ikinci implementasyonu (register/IRQ, kthread değil)
 ├── pyiface/                ← Python arayüz katmanı (Aşama 4, bkz. docs/PYIFACE_SPEC.md)
 │   ├── abi.py                  ← TEK donanım aynası: ioctl no, ctypes struct'lar, errno mapping
 │   ├── device.py               ← CarfieldDevice: op başına metot (ping/cluster_run/paging_test)
-│   └── demo.py                 ← MOCK-ONLY: xform() (CARFIELD_MOCK_OT_XFORM demo'su)
+│   └── demo.py                 ← MOCK-ONLY: xform() (CARFIELD_OT_XFORM demo'su)
 ├── sw/                     ← PULP tarafı test kodu (pulp_hello.c)
 └── tests/                  ← userspace testler
     ├── ioctl_test.c / cluster_test.c / paging_math_test.c / paging_ioctl_test.c / mock_ot_test.c  (C)
+    ├── mbox_reg_test.c          ← carfield_mbox_hw.h'nin register-map aritmetiği (kernel'siz derlenir)
     ├── conftest.py              ← pyiface/'i sys.path'e ekler
     └── test_pyiface.py          ← docs/MOCK_OT_SPEC.md §7'nin Python karşılığı
 ```
+
+---
+
+## Driver'ı Derle ve Yükle
+
+```bash
+cd ~/carfield-work/driver && make
+```
+
+**Modül parametreleri (birbirini dışlar — ikisi de set edilirse `carfield_init()` ikisini de başlatmaz):**
+
+| Parametre | Ne yapar |
+|---|---|
+| `mock_ot=1` | Host↔OT mailbox seam'ini bir kthread mock'la test eder — FPGA gerekmez |
+| `real_mbox=1` | Aynı seam'i gerçek mailbox register'ları + IRQ (`CARFIELD_MBOX_IRQ=58`) üzerinden gerçek donanıma bağlar |
+| (ikisi de 0) | Sadece `CARFIELD_PING`/`CARFIELD_PAGING_TEST` kullanılabilir, host↔OT ioctl'leri (`CARFIELD_OT_XFORM`, `CARFIELD_CLUSTER_RUN`) `-ENODEV` döner |
+
+```bash
+sudo insmod carfield-mod.ko mock_ot=1     # ya da: real_mbox=1
+```
+
+**Cluster boot testi (`tests/cluster_test.c`):** host binary'i L2'ye
+`mmap`+`memcpy` ile doğrudan yazar (donanım gerektirir), sonra
+`CARFIELD_CLUSTER_RUN` ile OT'yi mailbox üzerinden bilgilendirir — cluster'ı
+host değil OT boot eder (bkz. yukarıdaki mimari notu). `tests/` altındaki
+binary'ler `.gitignore`'da — `git pull` sonrası `carfield.h` değiştiyse
+**mutlaka** `cd tests && make clean && make` (aksi halde sessiz `ENOTTY`).
+
+Açık sorular ve donanım-bağımlı yer tutucular için `docs/QUESTIONS_FOR_TEAM.md`'ye bakın.
 
 ---
 

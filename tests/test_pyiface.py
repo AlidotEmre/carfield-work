@@ -60,8 +60,8 @@ def _run_and_check(dev, total, off, size, key=XOR_KEY):
     buf[0:total] = shadow
 
     dev._paging_op(
-        "xform", abi.CARFIELD_MOCK_OT_XFORM, abi.CarfieldMockOtReq,
-        addr + off, size, mock_status=abi.CARFIELD_MOCK_OT_STATUS_NONE,
+        "xform", abi.CARFIELD_OT_XFORM, abi.CarfieldOtXformReq,
+        addr + off, size, ot_status=abi.CARFIELD_OT_STATUS_NONE,
     )
 
     got = bytes(buf[0:total])

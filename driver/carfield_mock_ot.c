@@ -302,7 +302,7 @@ static int carfield_mock_ot_thread_fn(void *arg)
 
 		if (mock_force_err) {
 			status = mock_force_err;
-		} else if (cmd == CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT) {
+		} else if (cmd == CARFIELD_OT_CMD_CLUSTER_BOOT) {
 			/*
 			 * CLUSTER_BOOT's letter0 is a raw L2 phys addr, not a
 			 * carfield_mbox_header -- there is no header/map to

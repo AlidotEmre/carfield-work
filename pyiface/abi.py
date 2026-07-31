@@ -76,8 +76,8 @@ CARFIELD_PING = _iowr(CARFIELD_MAGIC, 0, CarfieldPing)  # carfield.h:20
 # Phase 2: CARFIELD_CLUSTER_RUN -- carfield.h. Notifies OpenTitan to boot
 # the PULP cluster from boot_addr; the host cannot boot it directly
 # (Daniele's 2026-07-30 code review, see project_alsaqr.md) -- same
-# host<->OT mailbox seam as CARFIELD_MOCK_OT_XFORM below, just with
-# CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT and no paging chain.
+# host<->OT mailbox seam as CARFIELD_OT_XFORM below, just with
+# CARFIELD_OT_CMD_CLUSTER_BOOT and no paging chain.
 # ---------------------------------------------------------------------------
 class CarfieldClusterRun(ctypes.Structure):
     _fields_ = [
@@ -140,10 +140,10 @@ CARFIELD_PAGING_TEST = _iowr(
 # ---------------------------------------------------------------------------
 
 # carfield_mock_ot.h:20 -- driver-internal constant, hardcoded inside
-# carfield.c's CARFIELD_MOCK_OT_XFORM handler (carfield.c:298). Never sent
-# by userspace -- there is no `cmd` field on CarfieldMockOtReq below. See
+# carfield.c's CARFIELD_OT_XFORM handler (carfield.c:298). Never sent
+# by userspace -- there is no `cmd` field on CarfieldOtXformReq below. See
 # PYIFACE_SPEC.md R1 correction for why this isn't a submit(cmd, ...) API.
-CARFIELD_MOCK_OT_CMD_XFORM = 0x0001
+CARFIELD_OT_CMD_XFORM = 0x0001
 
 CARFIELD_MOCK_OT_OK = 0  # carfield_mock_ot.h:24
 CARFIELD_MOCK_OT_ERR_MAGIC = 1  # carfield_mock_ot.h:25
@@ -157,27 +157,27 @@ CARFIELD_MOCK_OT_ERR_MAP = 5  # carfield_mock_ot.h:29
 CARFIELD_MOCK_OT_ERR_MAP_ENTRY = 6  # carfield_mock_ot.h:30
 
 # carfield_mock_ot.h:34 -- sentinel meaning "no reply happened" (mock_no_reply,
-# or a signal). Reused Python-side to disambiguate CARFIELD_MOCK_OT_XFORM's
+# or a signal). Reused Python-side to disambiguate CARFIELD_OT_XFORM's
 # two different -EFAULT causes -- see device.py's _map_error().
-CARFIELD_MOCK_OT_STATUS_NONE = 0xFFFFFFFF
+CARFIELD_OT_STATUS_NONE = 0xFFFFFFFF
 
 
-class CarfieldMockOtReq(ctypes.Structure):
+class CarfieldOtXformReq(ctypes.Structure):
     _fields_ = [
         ("user_addr", ctypes.c_uint64),  # carfield_mock_ot.h:79
         ("user_size", ctypes.c_uint64),  # carfield_mock_ot.h:80
-        ("mock_status", ctypes.c_uint32),  # carfield_mock_ot.h:82
+        ("ot_status", ctypes.c_uint32),  # carfield_mock_ot.h:82
         # 4 trailing pad bytes (20 -> 24), largest member is u64.
     ]
 
 
-assert ctypes.sizeof(CarfieldMockOtReq) == 24, (
-    "CarfieldMockOtReq drifted from carfield_mock_ot.h struct "
-    "carfield_mock_ot_req -- header changed, or ctypes padding assumption broke?"
+assert ctypes.sizeof(CarfieldOtXformReq) == 24, (
+    "CarfieldOtXformReq drifted from carfield_mock_ot.h struct "
+    "carfield_ot_xform_req -- header changed, or ctypes padding assumption broke?"
 )
 
-CARFIELD_MOCK_OT_XFORM = _iowr(
-    CARFIELD_MAGIC, 3, CarfieldMockOtReq
+CARFIELD_OT_XFORM = _iowr(
+    CARFIELD_MAGIC, 3, CarfieldOtXformReq
 )  # carfield_mock_ot.h:85-86
 
 

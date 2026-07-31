@@ -16,24 +16,26 @@ from . import abi
 
 
 def xform(dev, data: bytes) -> bytes:
-    """MOCK-ONLY. Sends `data` through CARFIELD_MOCK_OT_XFORM (requires
-    the module loaded with mock_ot=1) and returns the transformed bytes
-    (XOR 0x5A in place on the real, hardware-backed pages -- see
-    MOCK_OT_SPEC.md §4). Raises a CarfieldError subclass on any §5
-    rejection, ENODEV if mock_ot=0, or CarfieldTimeout on mock_no_reply.
+    """MOCK-ONLY. Sends `data` through CARFIELD_OT_XFORM (requires the
+    module loaded with mock_ot=1 -- also runs under real_mbox=1, but the
+    XOR-echo behavior below is the mock kthread's, not real firmware's)
+    and returns the transformed bytes (XOR 0x5A in place on the real,
+    hardware-backed pages -- see MOCK_OT_SPEC.md §4). Raises a
+    CarfieldError subclass on any §5 rejection, ENODEV if neither backend
+    is enabled, or CarfieldTimeout on mock_no_reply.
     """
     size = len(data)
     buf, addr = dev.alloc(size)
     buf[0:size] = data
     dev._paging_op(
         "xform",
-        abi.CARFIELD_MOCK_OT_XFORM,
-        abi.CarfieldMockOtReq,
+        abi.CARFIELD_OT_XFORM,
+        abi.CarfieldOtXformReq,
         addr,
         size,
         # Pre-fill with the "no reply yet" sentinel so device.py can tell
         # a copy-stage -EFAULT from an ERR_MAP -EFAULT after the fact --
         # see CarfieldDevice._map_error().
-        mock_status=abi.CARFIELD_MOCK_OT_STATUS_NONE,
+        ot_status=abi.CARFIELD_OT_STATUS_NONE,
     )
     return bytes(buf[0:size])

@@ -1,5 +1,5 @@
 /*
- * End-to-end userspace test for CARFIELD_MOCK_OT_XFORM (driver/carfield_mock_ot.c),
+ * End-to-end userspace test for CARFIELD_OT_XFORM (driver/carfield_mock_ot.c),
  * per MOCK_OT_SPEC.md §7. Requires the module loaded with mock_ot=1:
  *
  *   sudo insmod carfield-mod.ko mock_ot=1
@@ -60,7 +60,7 @@ static int run_and_check(int fd, uint8_t *buf, size_t total,
 			  const char *label)
 {
 	uint8_t *shadow;
-	struct carfield_mock_ot_req req;
+	struct carfield_ot_xform_req req;
 	size_t i;
 	int ok = 1;
 
@@ -75,9 +75,9 @@ static int run_and_check(int fd, uint8_t *buf, size_t total,
 	req.user_addr = (__u64)(unsigned long)(buf + off);
 	req.user_size = size;
 
-	if (ioctl(fd, CARFIELD_MOCK_OT_XFORM, &req) < 0) {
-		printf("FAIL [%s]: ioctl error: %s (mock_status=%u)\n",
-		       label, strerror(errno), req.mock_status);
+	if (ioctl(fd, CARFIELD_OT_XFORM, &req) < 0) {
+		printf("FAIL [%s]: ioctl error: %s (ot_status=%u)\n",
+		       label, strerror(errno), req.ot_status);
 		free(shadow);
 		return 0;
 	}
@@ -96,8 +96,8 @@ static int run_and_check(int fd, uint8_t *buf, size_t total,
 
 	free(shadow);
 	if (ok)
-		printf("PASS [%s]: off=%zu size=%zu mock_status=%u\n",
-		       label, off, size, req.mock_status);
+		printf("PASS [%s]: off=%zu size=%zu ot_status=%u\n",
+		       label, off, size, req.ot_status);
 	return ok;
 }
 
@@ -174,7 +174,7 @@ static int case_mmap_aligned(int fd)
 static int case_timeout(int fd)
 {
 	uint8_t buf[PAGE_SZ];
-	struct carfield_mock_ot_req req;
+	struct carfield_ot_xform_req req;
 	struct timespec t0, t1;
 	double elapsed_ms;
 	int rc, ok = 0;
@@ -188,7 +188,7 @@ static int case_timeout(int fd)
 	req.user_size = sizeof(buf);
 
 	clock_gettime(CLOCK_MONOTONIC, &t0);
-	rc = ioctl(fd, CARFIELD_MOCK_OT_XFORM, &req);
+	rc = ioctl(fd, CARFIELD_OT_XFORM, &req);
 	clock_gettime(CLOCK_MONOTONIC, &t1);
 	elapsed_ms = (t1.tv_sec - t0.tv_sec) * 1000.0 +
 		     (t1.tv_nsec - t0.tv_nsec) / 1e6;
@@ -199,9 +199,9 @@ static int case_timeout(int fd)
 	} else if (elapsed_ms < 1000.0) {
 		printf("FAIL [timeout]: returned in %.0fms, too fast for a real timeout\n",
 		       elapsed_ms);
-	} else if (req.mock_status != CARFIELD_MOCK_OT_STATUS_NONE) {
-		printf("FAIL [timeout]: mock_status=%u, expected STATUS_NONE\n",
-		       req.mock_status);
+	} else if (req.ot_status != CARFIELD_OT_STATUS_NONE) {
+		printf("FAIL [timeout]: ot_status=%u, expected STATUS_NONE\n",
+		       req.ot_status);
 	} else {
 		printf("PASS [timeout]: -ETIMEDOUT after %.0fms, no reply required\n",
 		       elapsed_ms);
@@ -219,7 +219,7 @@ static int case_timeout(int fd)
 static int case_rejection(int fd)
 {
 	uint8_t buf[PAGE_SZ];
-	struct carfield_mock_ot_req req;
+	struct carfield_ot_xform_req req;
 	int ok = 0;
 
 	fill_pattern(buf, sizeof(buf));
@@ -230,11 +230,11 @@ static int case_rejection(int fd)
 	req.user_addr = (__u64)(unsigned long)buf;
 	req.user_size = sizeof(buf);
 
-	if (ioctl(fd, CARFIELD_MOCK_OT_XFORM, &req) == 0) {
+	if (ioctl(fd, CARFIELD_OT_XFORM, &req) == 0) {
 		printf("FAIL [rejection/magic]: ioctl unexpectedly succeeded\n");
-	} else if (errno != EILSEQ || req.mock_status != CARFIELD_MOCK_OT_ERR_MAGIC) {
-		printf("FAIL [rejection/magic]: errno=%s mock_status=%u (expected EILSEQ/%d)\n",
-		       strerror(errno), req.mock_status, CARFIELD_MOCK_OT_ERR_MAGIC);
+	} else if (errno != EILSEQ || req.ot_status != CARFIELD_MOCK_OT_ERR_MAGIC) {
+		printf("FAIL [rejection/magic]: errno=%s ot_status=%u (expected EILSEQ/%d)\n",
+		       strerror(errno), req.ot_status, CARFIELD_MOCK_OT_ERR_MAGIC);
 	} else {
 		printf("PASS [rejection/magic]: rejected with ERR_MAGIC as a distinct errno\n");
 		ok = 1;
@@ -250,7 +250,7 @@ static int case_rejection(int fd)
 static int case_bad_xform_sanity(int fd)
 {
 	uint8_t buf[PAGE_SZ], shadow[PAGE_SZ];
-	struct carfield_mock_ot_req req;
+	struct carfield_ot_xform_req req;
 	size_t i;
 	int mismatch = 0, ok = 0;
 
@@ -264,7 +264,7 @@ static int case_bad_xform_sanity(int fd)
 	req.user_addr = (__u64)(unsigned long)buf;
 	req.user_size = sizeof(buf);
 
-	if (ioctl(fd, CARFIELD_MOCK_OT_XFORM, &req) < 0) {
+	if (ioctl(fd, CARFIELD_OT_XFORM, &req) < 0) {
 		printf("FAIL [bad_xform sanity]: ioctl error: %s\n", strerror(errno));
 		set_param("mock_bad_xform", "0");
 		return 0;

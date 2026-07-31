@@ -155,7 +155,7 @@ doğrudan boot edemez, OT edermiş** — host<->OT etkileşimi geliştiriliyor,
 OT'nin cluster'ı nasıl boot ettiği tamamen black box (madde 2/3'ün
 güncellemelerine bkz.). Bu nedenle `CARFIELD_CLUSTER_RUN`
 (`driver/carfield.c`) artık register-poke yerine host->OT mailbox notify
-yapıyor (`CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT`, mbox1) ve cevabı mbox7
+yapıyor (`CARFIELD_OT_CMD_CLUSTER_BOOT`, mbox1) ve cevabı mbox7
 üzerinden bekliyor.
 
 **Açık soru, kullanıcının kendi tahmini (kesin bilgi değil):** Bu mbox7

@@ -6,7 +6,7 @@
  * 2026-07-30 code review, OpenTitan is the only thing that can, and how
  * it does so is out of scope/black box here (see
  * memory/project_alsaqr.md). This test only exercises the host<->OT
- * notification (CARFIELD_CLUSTER_RUN), same as CARFIELD_MOCK_OT_XFORM's
+ * notification (CARFIELD_CLUSTER_RUN), same as CARFIELD_OT_XFORM's
  * seam. Whether OT's reply also means "cluster finished running", or
  * only "OT accepted the boot request", is still an open question
  * (docs/QUESTIONS_FOR_TEAM.md) -- this test cannot currently tell the

@@ -50,7 +50,7 @@ Carfield SoC için Linux kernel driver yazıyor. Proje başlangıcı: 22 Haziran
    girer (2026-07-30, Daniele code review).** Cluster'a host'tan doğrudan
    register yazımı (`soc_ctrl`/`int_cluster` poke, EU üzerinden tetikleme
    vb.) önerme/yazma — bu artık geçersiz bir model. Host'un işi sadece
-   host<->OT mailbox bildirişimi (`CARFIELD_MOCK_OT_CMD_CLUSTER_BOOT`,
+   host<->OT mailbox bildirişimi (`CARFIELD_OT_CMD_CLUSTER_BOOT`,
    bkz. `carfield_mock_ot.h`); OT'nin cluster'ı nasıl boot ettiği tamamen
    black box, host driver'ın ilgi alanı dışında (Daniele: "you can
    consider black box everything that's in charge of OT"). Detay:
