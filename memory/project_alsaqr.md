@@ -989,6 +989,42 @@ görünürde `5d4dab2`'de takılı kalmıştı — branch adı belirtmeden
 tamamen kalktığı için beklenen). `real_mbox=1` insmod/rmmod de temiz,
 aynı beklenen "no matching 'opentitan_mbox-0.0' device" uyarısı, crash yok.
 
+## Cluster Boot / "Inference Nerede Çalışır" Sorusu — Bilinçli Olarak Ertelendi (2026-08-05)
+
+Kod incelemesi sırasında kullanıcıya, `ALSAQR_CLUSTER_RUN`'ın (L2'ye
+binary yazıp OT'yi cluster boot etmesi için bilgilendiren, bugün kaldırılan
+akış) `ALSAQR_OT_XFORM`'dan (encrypted blob'u pinleyip OT'ye mailbox'la
+gönderen, hâlâ duran akış) **ayrı ve farklı bir mekanizma** olduğu
+açıklandı — "encrypted NN blob → L2 → mbox_send" kullanıcının hatırladığı
+tek-akış modeli aslında iki ayrı şeydi, ve L2 kısmı hiçbir zaman blob
+transformuna değil cluster boot'a aitti. Bu, AlSaqr'da PULP cluster kanıtı
+olmaması nedeniyle "inference gerçekte nerede çalışacak (CVA6'da mı, OT'nin
+DMA edebildiği başka bir compute biriminde mi)" sorusunu **yeni bir açık
+soru** olarak ortaya çıkardı (Carfield tarafında zaten "sonuç dönüş yolu"
+olarak Daniele tarafından ertelenmiş olan sorunun AlSaqr'daki daha keskin
+hâli).
+
+**Kullanıcının kararı (Daniele'nin AlSaqr tarafındaki eşdeğerinden gelen
+talimatı aktararak):** Host↔OT mailbox etkileşiminin dışında kalan HER ŞEY
+— cluster boot dahil — **şimdilik black box**. Bu tam olarak Carfield
+tarafında zaten yerleşik olan "you can consider black box everything
+that's in charge of OT" prensibinin AlSaqr'a taşınması ([[project-carfield]]
+madde 5 ile aynı ruh). Cluster boot sorusu **kenarda bekleyecek**, zorlanmayacak
+— sadece not edilip ileride ele alınacak.
+
+**Why:** Kullanıcı bunu doğrudan aktardı, kendi kararı değil — ekip
+tarafında zaten benimsenmiş bir kapsam sınırlama prensibi.
+
+**How to apply:** Bu soruyu (inference nerede çalışır, cluster var mı)
+tekrar tekrar gündeme getirip çözülmesi gerekiyormuş gibi sunma — bilinçli
+olarak ertelendi, sadece not edildi. Host↔OT mailbox akışının (`ALSAQR_PING`/
+`ALSAQR_PAGING_TEST`/`ALSAQR_OT_XFORM`) ötesindeki her şeyi (cluster boot,
+inference'ın nerede çalıştığı, sonucun nasıl döneceği) kod önerilerinde
+"OT'nin sorumluluğunda, henüz netleşmedi" diye çerçevele, çözülmesi gereken
+bir blok olarak sunma. İleride bu konu açıldığında (kullanıcı "üstünde
+duracağız" dedi) bu notu ve yukarıdaki "Cluster Boot / Cheshire kaldırıldı"
+bölümünü referans al.
+
 ## Önemli Kaynaklar
 
 - Carfield repo: https://github.com/pulp-platform/carfield
