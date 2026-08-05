@@ -978,6 +978,17 @@ açılabilir — şu an "yok" değil "bulunamadı" diye çerçevelenmeli.
 (2, 6, 9) bu branch için artık geçersiz ama dosyanın kendisi (Carfield'ın
 tarihi kaydı olarak) değiştirilmedi — `main` için hâlâ geçerliler.
 
+**carfield-VM'de doğrulandı (2026-08-05, aynı oturum, commit `b86bc52`):**
+`git fetch origin alsaqr-migration` + `reset --hard` sonrası (ilk denemede
+`git fetch origin main` yanlışlıkla sadece main'i güncellediği için HEAD
+görünürde `5d4dab2`'de takılı kalmıştı — branch adı belirtmeden
+`git fetch origin` kullanmak bu sınıf karışıklığı önler) `driver/`+`tests/`
+`make clean && make` temiz, `mbox_reg_test` PASS, `mock_ot=1` altında
+`mock_ot_test` PASS + `test_pyiface.py` **10/10 PASS**, `/dev/alsaqr` var,
+`rmmod` sonrası `dmesg` temiz (EOC IRQ uyarısı artık hiç yok — kod
+tamamen kalktığı için beklenen). `real_mbox=1` insmod/rmmod de temiz,
+aynı beklenen "no matching 'opentitan_mbox-0.0' device" uyarısı, crash yok.
+
 ## Önemli Kaynaklar
 
 - Carfield repo: https://github.com/pulp-platform/carfield
