@@ -27,6 +27,19 @@ Carfield SoC için Linux kernel driver yazıyor. Proje başlangıcı: 22 Haziran
 - Her yeni teknik bilgi (memory map, boot prosedürü, API değişikliği) öğrenildiğinde
   `memory/project_alsaqr.md` dosyasını güncelle.
 
+## Branch Notu: `alsaqr-migration` (2026-08-05)
+
+Bu branch'te hedef platform Carfield'dan AlSaqr'a kaydırılıyor (host
+Carfield ile Linux boot edemediği için). `driver/carfield_mbox_hw.c/.h`
+artık AlSaqr'ın gerçek device-tree'sindeki mailbox haritasını
+(`alsaqr-fpga-ecs/dts/generate_dts.py`: base `0x10404000`, IRQ DT'den
+dinamik alınıyor, `compatible = "opentitan_mbox-0.0"`) kullanıyor —
+Carfield'ın kendi haritası (`0x40000000`, hardcoded IRQ 58) DEĞİL. Detay:
+`memory/project_alsaqr.md` "AlSaqr'a Pivot" bölümü. `main`'deki Carfield
+register haritasını burada "eski/yanlış" diye sunma — iki ayrı platform
+hedefi, `main` hâlâ geçerli. İsimlendirme (`carfield_*` → `alsaqr_*`)
+bilinçli olarak ertelendi, mantık doğrulanmadan yapılmayacak.
+
 ## Kritik Teknik Kurallar (Unutturma)
 
 1. **`fence.i` cache flush YAPMAZ — bu kural yanlıştı, düzeltildi.** RISC-V'de

@@ -7,78 +7,69 @@
  * read_reply(). This file is the second implementation of that seam --
  * mailbox registers + IRQ instead of a kthread + shared struct.
  *
- * Register map confirmed against Daniele's answers (docs/QUESTIONS_FOR_TEAM.md)
- * and the real mbox.h he shared (2026-07-06), NOT guessed:
- *   base + id*CARFIELD_MBOX_STRIDE + <offset>
- * Ported from mailbox-simulation-withoutFPGA/carfield_mbox.c (carfield_mbox_sim
- * repo), which already carries this same register map in kernel-API-shaped
- * code (writel/readl/__iomem) validated end-to-end in userspace simulation.
+ * Register map: AlSaqr's real, generated device-tree node for the OpenTitan
+ * mailbox (alsaqr-fpga-ecs/dts/generate_dts.py):
+ *
+ *   ot_mbox@10404000 {
+ *     compatible = "opentitan_mbox-0.0";
+ *     reg = <0x0 0x10404000 0x0 0x28>;
+ *     interrupt-parent = <&PLIC0>;
+ *     interrupts = <10>;
+ *   };
+ *
+ * This supersedes the earlier Carfield-specific map (base 0x40000000,
+ * id*stride multi-mailbox scheme, hardcoded IRQ 58) -- that map was never
+ * confirmed against real hardware (FPGA session still pending). This one is:
+ * alsaqr-fpga-ecs/develop/titanssl/titanssl_driver/driver.c already runs
+ * against these exact addresses in production (see docs/TITANSSL_ANALYSIS.md).
+ *
+ * AlSaqr has a single host<->OT mailbox, no separate PULP-side channel (same
+ * conclusion already reached independently for Carfield -- "PULP'a komuta
+ * mailbox'ı yok", see memory/project_alsaqr.md) -- so unlike the old map,
+ * there is no id/stride indirection and no second inbound channel to
+ * provision.
  *
  * Deliberately no kernel headers above this line -- the register-offset
- * macros and carfield_mbox_reg_addr() below are pure integer arithmetic, so
- * this half can be included standalone by tests/mbox_reg_test.c with plain
- * gcc, the same split carfield_paging.h uses for carfield_paging_compute_info().
+ * macros below are pure integer constants, so this half can be included
+ * standalone by tests/mbox_reg_test.c with plain gcc, the same split
+ * carfield_paging.h uses for carfield_paging_compute_info().
  */
 
-#define CARFIELD_MBOX_BASE_ADDR	0x40000000UL
-#define CARFIELD_MBOX_STRIDE		0x100
-
-/* Sender (SND) side -- the only side actually wired to an interrupt line
- * per Daniele's 2026-07-09 confirmation (all three directions use
- * INT_SND_SET as the doorbell). RCV_* offsets exist in the real mbox.h but
- * are NOT used here -- see the INT_RCV_SET note below. */
-#define CARFIELD_MBOX_REG_SND_STAT	0x00
-#define CARFIELD_MBOX_REG_SND_SET	0x04
-#define CARFIELD_MBOX_REG_SND_CLR	0x08
-#define CARFIELD_MBOX_REG_SND_EN	0x0C
-
-#define CARFIELD_MBOX_REG_LETTER0	0x80
-#define CARFIELD_MBOX_REG_LETTER1	0x84	/* confirmed 0x84, NOT 0x8C */
-
-#define CARFIELD_MBOX_ID_HOST_TO_OT	1
-#define CARFIELD_MBOX_ID_PULP_TO_HOST	5
-#define CARFIELD_MBOX_ID_OT_TO_HOST	7
-
-/* ioremap window: covers mailbox ids 0..CARFIELD_MBOX_ID_OT_TO_HOST
- * inclusive (all confirmed-real mailbox register space by the id*stride
- * formula above), NOT a confirmed total size of the real mailbox IP block.
- * If the real unit turns out smaller or larger, this is the one place to
- * change -- see the FPGA-session note in carfield_mbox_hw.c's start(). */
-#define CARFIELD_MBOX_UNIT_SIZE \
-	((CARFIELD_MBOX_ID_OT_TO_HOST + 1) * CARFIELD_MBOX_STRIDE)
+#define CARFIELD_MBOX_BASE_ADDR	0x10404000UL
+#define CARFIELD_MBOX_UNIT_SIZE		0x28	/* full reg span per the DT node above */
 
 /*
- * CONFIRMED (2026-07-13): `HOST_MBOX_IRQ 58` is defined in Daniele's real
- * `car_lib_mbox.h` (OpenTitan ROM-side header), next to
- * `HOST_TO_CLUSTER_MBOX`/`CLUSTER_MBOX_EVT` -- those two were separately
- * refuted by Daniele as dead/misleading, but no equivalent refutation ever
- * came for HOST_MBOX_IRQ, so it's accepted as real. Supersedes the earlier
- * "58 is unconfirmed, only appears as MOCK_OT_SPEC.md §8 filler text"
- * finding -- that finding was accurate against the sources checked at the
- * time, it just turned out there was a better source (this header) that
- * hadn't been checked yet.
+ * MBOX word area: where the outbound message (header_phys, cmd) is written
+ * before ringing the doorbell. 0x14 bytes (5 words) available per the real
+ * device (matches titanssl's own MBOX_SIZE); this driver's wire format only
+ * uses the first two words (header_phys, cmd) -- see the note in
+ * carfield_mbox_hw.c's send(). Words 2-4 are left unused/zero, not a
+ * titanssl-style 5-field ABI (magic/cmd+bitfield/session/pid) -- that ABI
+ * belongs to titanssl's own firmware, not ours (we have no OT firmware yet,
+ * see docs/QUESTIONS_FOR_TEAM.md).
  */
-#define CARFIELD_MBOX_IRQ		58
+#define CARFIELD_MBOX_REG_WORD0		0x00	/* header_phys */
+#define CARFIELD_MBOX_REG_WORD1		0x04	/* cmd */
+#define CARFIELD_MBOX_WORD_AREA_SIZE	0x14	/* 5 x u32, matches titanssl MBOX_SIZE */
+
+/* 0x14-0x20 is reserved/unused per the DT node's 0x28-byte span -- not a
+ * gap in this driver's own layout, just unused hardware address space
+ * between the word area and the trigger registers below. */
+
+#define CARFIELD_MBOX_REG_DOORBELL	0x20	/* write-1 to ring (host -> OT) */
+#define CARFIELD_MBOX_REG_COMPLETION	0x24	/* write-0 to ack after wake (OT -> host) */
 
 /*
- * Genuinely open (docs/QUESTIONS_FOR_TEAM.md item 6): whether the header
- * page should live in L2 instead of DRAM, and at what offset within
- * whichever of the two contradictory L2 layouts turns out real. Header
- * stays in DRAM (GFP_DMA32, carfield_paging_build()) for now -- this define
- * is unused by any code path, purely a marker for where that offset would
- * go once the L2 question resolves. TODO(daniele-fpga-session).
+ * DT compatible string this driver's platform_driver matches against, to
+ * obtain the real IRQ number via platform_get_irq() instead of a hardcoded
+ * placeholder -- same pattern as titanssl_driver/driver.c's ot_mbox_probe()
+ * (see docs/TITANSSL_ANALYSIS.md §5 "RESERVE": IRQ acquisition via
+ * devicetree/platform_device). Unlike Carfield's old CARFIELD_MBOX_IRQ=58
+ * (never confirmed against real hardware), the DT node above is generated,
+ * authoritative source -- so this is read dynamically rather than
+ * hardcoded, in case the generated DT ever changes the source ID.
  */
-#define CARFIELD_HEADER_L2_OFFSET	0
-
-/* Absolute register offset (relative to CARFIELD_MBOX_BASE_ADDR) for a
- * given mailbox id + register offset. Pure arithmetic -- no __iomem here,
- * see carfield_mbox_hw.c for the version that adds this to a mapped base
- * pointer. */
-static inline unsigned long carfield_mbox_reg_addr(unsigned int id,
-						     unsigned long off)
-{
-	return (unsigned long)id * CARFIELD_MBOX_STRIDE + off;
-}
+#define CARFIELD_MBOX_DT_COMPATIBLE	"opentitan_mbox-0.0"
 
 #ifdef __KERNEL__
 
@@ -94,8 +85,9 @@ static inline unsigned long carfield_mbox_reg_addr(unsigned int id,
  */
 int carfield_mbox_hw_start(void);
 
-/* Stops the backend (frees the IRQ if requested, iounmaps if mapped).
- * Call from carfield_exit(). Safe to call even if start() was a no-op. */
+/* Stops the backend (frees the IRQ if requested, iounmaps if mapped,
+ * unregisters the platform_driver). Call from carfield_exit(). Safe to call
+ * even if start() was a no-op. */
 void carfield_mbox_hw_stop(void);
 
 /* True iff real_mbox=1 was requested (independent of whether ioremap/IRQ
@@ -104,9 +96,9 @@ void carfield_mbox_hw_stop(void);
 bool carfield_mbox_hw_requested(void);
 
 /* True iff the hardware backend is both requested AND actually ready to
- * send (ioremap of the mailbox unit succeeded). The ioctl uses this to
- * decide which backend to dispatch to, and to fail with -ENODEV instead of
- * calling send() against an unmapped region. */
+ * send (ioremap succeeded AND the DT-matched IRQ was obtained/requested).
+ * The ioctl uses this to decide which backend to dispatch to, and to fail
+ * with -ENODEV instead of calling send() against an unmapped region. */
 bool carfield_mbox_hw_enabled(void);
 
 /*
@@ -115,12 +107,8 @@ bool carfield_mbox_hw_enabled(void);
  * signatures, so the ioctl caller in carfield.c only needs to pick which
  * set of three functions to call, not restructure its flow.
  *
- * send(): host -> OT doorbell (mailbox id 1). wait_completion()/read_reply()
- * only observe mailbox id 7 (OT -> host reply) -- mailbox id 5 (PULP ->
- * host) is provisioned (IRQ registered, INT_SND_EN set) so its
- * level-sensitive line gets acked instead of wedging the shared IRQ, but
- * nothing consumes it yet; there is no PULP-side consumer to talk to (Event
- * Unit work, out of scope here per spec §4).
+ * send(): host -> OT doorbell. wait_completion()/read_reply() observe the
+ * single OT -> host completion signal.
  */
 void carfield_mbox_hw_send(u32 header_phys, u32 cmd);
 int carfield_mbox_hw_wait_completion(long timeout_ms);

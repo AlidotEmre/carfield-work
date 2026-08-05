@@ -1,61 +1,76 @@
 /*
- * Userspace test for carfield_mbox_reg_addr() (driver/carfield_mbox_hw.h).
+ * Userspace test for the AlSaqr mailbox register map (driver/carfield_mbox_hw.h).
  *
- * Pure arithmetic -- validates that base+id*stride+offset matches the
- * confirmed register map (docs/QUESTIONS_FOR_TEAM.md, Daniele's 2026-07-09
- * answers) by hand-checked expected values. No kernel, no FPGA, no hardware
- * required; this is the one part of the real mailbox backend that's fully
- * testable without silicon (spec §5.2).
+ * Pure arithmetic/constant checks against the real, generated device-tree
+ * node (alsaqr-fpga-ecs/dts/generate_dts.py):
+ *
+ *   ot_mbox@10404000 {
+ *     compatible = "opentitan_mbox-0.0";
+ *     reg = <0x0 0x10404000 0x0 0x28>;
+ *     interrupt-parent = <&PLIC0>;
+ *     interrupts = <10>;
+ *   };
+ *
+ * No kernel, no FPGA, no hardware required -- this is the one part of the
+ * real mailbox backend that's fully testable without silicon.
  */
 
 #include <stdio.h>
+#include <string.h>
 #include "../driver/carfield_mbox_hw.h"
 
 static int failures;
 
-static void check(const char *name, unsigned int id, unsigned long off,
-		   unsigned long expected)
+static void check_addr(const char *name, unsigned long got, unsigned long expected)
 {
-	unsigned long got = carfield_mbox_reg_addr(id, off);
-
-	printf("[%-24s] id=%u off=0x%02lx -> 0x%04lx\n", name, id, off, got);
+	printf("[%-24s] -> 0x%02lx\n", name, got);
 	if (got != expected) {
-		printf("    FAIL: expected 0x%04lx\n", expected);
+		printf("    FAIL: expected 0x%02lx\n", expected);
 		failures++;
 	}
 }
 
 int main(void)
 {
-	printf("== Carfield mailbox register-math test (no kernel/FPGA needed) ==\n\n");
+	printf("== AlSaqr mailbox register-map test (no kernel/FPGA needed) ==\n\n");
 
-	/* Mailbox 1 (host -> OT): SND_SET, LETTER0, LETTER1 */
-	check("id1 SND_STAT",  CARFIELD_MBOX_ID_HOST_TO_OT, CARFIELD_MBOX_REG_SND_STAT, 0x100);
-	check("id1 SND_SET",   CARFIELD_MBOX_ID_HOST_TO_OT, CARFIELD_MBOX_REG_SND_SET,  0x104);
-	check("id1 SND_CLR",   CARFIELD_MBOX_ID_HOST_TO_OT, CARFIELD_MBOX_REG_SND_CLR,  0x108);
-	check("id1 LETTER0",   CARFIELD_MBOX_ID_HOST_TO_OT, CARFIELD_MBOX_REG_LETTER0,  0x180);
-	check("id1 LETTER1",   CARFIELD_MBOX_ID_HOST_TO_OT, CARFIELD_MBOX_REG_LETTER1,  0x184);
+	/* Base address and total span must match the DT node exactly. */
+	check_addr("MBOX_BASE_ADDR", CARFIELD_MBOX_BASE_ADDR, 0x10404000UL);
+	check_addr("MBOX_UNIT_SIZE", CARFIELD_MBOX_UNIT_SIZE, 0x28);
 
-	/* Mailbox 5 (PULP -> host) */
-	check("id5 SND_STAT",  CARFIELD_MBOX_ID_PULP_TO_HOST, CARFIELD_MBOX_REG_SND_STAT, 0x500);
-	check("id5 SND_SET",   CARFIELD_MBOX_ID_PULP_TO_HOST, CARFIELD_MBOX_REG_SND_SET,  0x504);
-	check("id5 SND_CLR",   CARFIELD_MBOX_ID_PULP_TO_HOST, CARFIELD_MBOX_REG_SND_CLR,  0x508);
-	check("id5 LETTER0",   CARFIELD_MBOX_ID_PULP_TO_HOST, CARFIELD_MBOX_REG_LETTER0,  0x580);
-	check("id5 LETTER1",   CARFIELD_MBOX_ID_PULP_TO_HOST, CARFIELD_MBOX_REG_LETTER1,  0x584);
+	/* Word area (outbound header_phys + cmd) must fit inside the word area
+	 * reserved for it, and the word area itself must fit before DOORBELL. */
+	check_addr("WORD0",             CARFIELD_MBOX_REG_WORD0, 0x00);
+	check_addr("WORD1",             CARFIELD_MBOX_REG_WORD1, 0x04);
+	check_addr("WORD_AREA_SIZE",    CARFIELD_MBOX_WORD_AREA_SIZE, 0x14);
 
-	/* Mailbox 7 (OT -> host) */
-	check("id7 SND_STAT",  CARFIELD_MBOX_ID_OT_TO_HOST, CARFIELD_MBOX_REG_SND_STAT, 0x700);
-	check("id7 SND_SET",   CARFIELD_MBOX_ID_OT_TO_HOST, CARFIELD_MBOX_REG_SND_SET,  0x704);
-	check("id7 SND_CLR",   CARFIELD_MBOX_ID_OT_TO_HOST, CARFIELD_MBOX_REG_SND_CLR,  0x708);
-	check("id7 LETTER0",   CARFIELD_MBOX_ID_OT_TO_HOST, CARFIELD_MBOX_REG_LETTER0,  0x780);
-	check("id7 LETTER1",   CARFIELD_MBOX_ID_OT_TO_HOST, CARFIELD_MBOX_REG_LETTER1,  0x784);
+	/* Trigger registers -- these offsets are the two hardware addresses
+	 * this driver actually pokes beyond the word area, taken directly
+	 * from titanssl_driver/driver.c's DOORBELL/COMPLETION #defines, which
+	 * already run against this same base in production. */
+	check_addr("DOORBELL",    CARFIELD_MBOX_REG_DOORBELL,    0x20);
+	check_addr("COMPLETION",  CARFIELD_MBOX_REG_COMPLETION,  0x24);
 
-	/* Sanity: unit size covers exactly through id7's LETTER1 (0x784) and
-	 * no further -- confirms the ioremap window define matches the ids
-	 * actually in use, not an arbitrary round number. */
-	printf("[%-24s] -> 0x%04x\n", "CARFIELD_MBOX_UNIT_SIZE", CARFIELD_MBOX_UNIT_SIZE);
-	if (CARFIELD_MBOX_UNIT_SIZE <= 0x784) {
-		printf("    FAIL: unit size too small to cover id7's LETTER1 (0x784)\n");
+	printf("[%-24s] \"%s\"\n", "DT_COMPATIBLE", CARFIELD_MBOX_DT_COMPATIBLE);
+	if (strcmp(CARFIELD_MBOX_DT_COMPATIBLE, "opentitan_mbox-0.0") != 0) {
+		printf("    FAIL: does not match the generated DT node's compatible string\n");
+		failures++;
+	}
+
+	/* Sanity: every register this driver touches must fall inside the
+	 * ioremap'd window, and the window itself must match the DT reg size
+	 * exactly (not just "big enough") so a future DT regen that shrinks
+	 * or grows the node is caught here instead of silently over/under
+	 * mapping real hardware. */
+	if (CARFIELD_MBOX_REG_WORD0 + 4 > CARFIELD_MBOX_UNIT_SIZE ||
+	    CARFIELD_MBOX_REG_WORD1 + 4 > CARFIELD_MBOX_UNIT_SIZE ||
+	    CARFIELD_MBOX_REG_DOORBELL + 4 > CARFIELD_MBOX_UNIT_SIZE ||
+	    CARFIELD_MBOX_REG_COMPLETION + 4 > CARFIELD_MBOX_UNIT_SIZE) {
+		printf("    FAIL: a register offset falls outside CARFIELD_MBOX_UNIT_SIZE\n");
+		failures++;
+	}
+	if (CARFIELD_MBOX_WORD_AREA_SIZE > CARFIELD_MBOX_REG_DOORBELL) {
+		printf("    FAIL: word area overlaps the doorbell register\n");
 		failures++;
 	}
 

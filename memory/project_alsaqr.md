@@ -795,6 +795,89 @@ Python import'uyla doğrulanmıştı, gerçek kernelde hiç çalıştırılmamı
 **How to apply:** Bu rename'i tekrar "sadece kod, test edilmedi" diye sunma —
 hem C hem Python tarafı gerçek kernelde PASS aldı, unload de temiz.
 
+## AlSaqr'a Pivot — `alsaqr-migration` branch, mailbox HW backend'i gerçek register haritasına uyarlandı (2026-08-05)
+
+Host, Carfield ile Linux'u boot edemediği için ekip çalışmayı AlSaqr
+platformu üzerinden derinleştirmeye karar verdi. Kullanıcı yeni bir repo
+açmak yerine bu repoda ilerlemeyi tercih etti — isimlendirme
+(`carfield_*` → `alsaqr_*`) kolayca sonra halledilecek, asıl mimari
+(chardev/ioctl arayüzü, paging zinciri, host↔OT mailbox seam'i, pyiface,
+mock_ot) zaten platform-agnostik. Bu değişiklikler **`alsaqr-migration`
+branch'inde**, `main`'e dokunmadan yapıldı.
+
+**Bulunan yeni gerçek kaynak:** `alsaqr-fpga-ecs/dts/generate_dts.py`
+içinde AlSaqr'ın gerçek, üretilmiş device-tree düğümü:
+```
+ot_mbox@10404000 {
+  compatible = "opentitan_mbox-0.0";
+  reg = <0x0 0x10404000 0x0 0x28>;
+  interrupt-parent = <&PLIC0>;
+  interrupts = <10>;
+};
+```
+Bu, Carfield'ın kendi mailbox haritasından (`0x40000000` base, id*stride
+çoklu-mailbox şeması, `CARFIELD_MBOX_IRQ=58` — hiç FPGA'da teyit
+edilmemişti) tamamen farklı **ve** daha güvenilir bir kaynak: titanssl
+driver zaten bu adreslerle üretimde çalışıyor (bkz.
+`docs/TITANSSL_ANALYSIS.md`), ve IRQ 10 hardcode değil, generate_dts.py'nin
+kendisinden. AlSaqr'da ayrı bir PULP-mailbox kanalı da yok — titanssl tek
+host↔OT kanalı modelliyor, bu da Carfield tarafında zaten "sağlayıcısı yok,
+ölü ağırlık" diye işaretlenmiş `mbox_in_pulp` kanalıyla tutarlı.
+
+**Yapılan değişiklik:** `driver/carfield_mbox_hw.c/.h` baştan yazıldı:
+- Register haritası: tek `0x28` byte'lık bölge (`MBOX_BASE_ADDR
+  0x10404000`), word alanı (`WORD0`=header_phys, `WORD1`=cmd, titanssl'in
+  5 kelimelik ABI'si DEĞİL — bizim kendi minimal formatımız, henüz OT
+  firmware'imiz olmadığı için), `DOORBELL` (`+0x20`), `COMPLETION`
+  (`+0x24`). id/stride çoklu-mailbox modeli tamamen kalktı.
+- IRQ artık hardcoded `58` değil — titanssl'in `ot_mbox_probe()` pattern'i
+  ile (`platform_driver` + `of_device_id` compatible `"opentitan_mbox-0.0"`
+  eşleşmesi + `platform_get_irq()`) DT'den dinamik alınıyor
+  (`docs/TITANSSL_ANALYSIS.md` §5 "RESERVE" maddesinin önerdiği, artık
+  gerçek bir DT kaynağı olduğu için uygulanabilir hale gelen adım).
+- `mbox_in_pulp` kanalı silindi, tek `mbox_in_ot`/`mbox_wq`/`mbox_completed`
+  kaldı.
+- Korunan disiplinler: `wait_event_interruptible_timeout`, doorbell'dan
+  önce `atomic_set(completed, 0)` (stale-reply koruması), `wmb()` +
+  doorbell sıralaması, `request_irq()` başarısından SONRA "enable" adımı
+  (AlSaqr'da ayrı bir SND_EN register'ı yok, `request_irq()`'ün kendisi bu
+  rolü üstleniyor).
+- `driver/carfield.c`, `carfield_mock_ot.c/.h`, `carfield_paging.*`,
+  `pyiface/` — **DOKUNULMADI**, mevcut seam tasarımı
+  (`carfield_mbox_hw_enabled()`/`carfield_mock_ot_enabled()`) bu swap'i
+  zaten izole ediyor.
+- `tests/mbox_reg_test.c` yeni register haritasına göre yeniden yazıldı,
+  düz `gcc` ile derlenip **PASS** (Windows tarafında, kernel'siz —
+  carfield-VM'de tekrar çalıştırılmalı).
+
+**Kapsam dışı bırakılanlar (bilinçli):** Repo-genelinde `carfield_*` →
+`alsaqr_*` yeniden adlandırma (kullanıcı "kolay, sonra hallederiz" dedi);
+`alsaqr-fpga-ecs`'nin kendi `make qemu` hedefinin gerçek `ot_mbox`'ı
+register-seviyesinde modelleyip modellemediğinin araştırılması; OT
+firmware wire-formatının titanssl'e göre zenginleştirilmesi
+(`TITANSSL_ANALYSIS.md` §5 zaten "RESERVE, şimdi değil" demişti, karar
+değişmedi).
+
+**Henüz yapılmadı — carfield-VM doğrulaması bekliyor:** `driver/` ve
+`tests/`'te `make clean && make`, `mbox_reg_test`, `mock_ot=1` regresyonu
+(`mock_ot_test` + `test_pyiface.py`), `real_mbox=1` insmod (x86 VM'de gerçek
+DT düğümü olmayacağı için `-ENODEV` bekleniyor, bu normal), `dmesg` temizliği.
+Bu adımlar Windows'tan (kernel header'ı yok) çalıştırılamadı, kullanıcının
+VM'de çalıştırması gerekiyor.
+
+**Why:** Host'un Carfield cluster'ını doğrudan boot edememesi pratik bir
+ortam kısıtıydı, tasarım tercihi değil — bu pivotu tetikledi. Repo
+değiştirmemek (yeni repo yerine branch), mevcut sağlam/doğrulanmış
+altyapıyı (paging bug fix'leri, mock_ot regresyonu, pyiface) yeniden
+yazma riskinden kaçınmak için tercih edildi.
+
+**How to apply:** Bu artık `main`'deki Carfield register haritasının
+(`0x40000000`, IRQ 58) yerini ALMIYOR — main hâlâ o haritayı kullanıyor,
+sadece `alsaqr-migration` branch'i AlSaqr'a geçti. İkisini karıştırma. IRQ
+10'u da "teyit edildi ama FPGA'da hiç denenmedi" şeklinde sun — titanssl
+üretimde çalışıyor olması güçlü bir sinyal ama bizim kendi kodumuz henüz
+gerçek donanımda test edilmedi.
+
 ## Önemli Kaynaklar
 
 - Carfield repo: https://github.com/pulp-platform/carfield

@@ -9,48 +9,102 @@
 #include <linux/jiffies.h>
 #include <linux/printk.h>
 #include <linux/errno.h>
+#include <linux/platform_device.h>
+#include <linux/of.h>
+#include <linux/of_device.h>
 
 /*
- * Real hardware backend -- see carfield_mbox_hw.h for the register map and
- * the seam this implements. Ported from
- * mailbox-simulation-withoutFPGA/carfield_mbox.c (carfield_mbox_sim repo,
- * commit e5708e6): that file is already written in kernel-API shape
- * (writel/readl/__iomem/wait_event_interruptible_timeout) and validated
- * end-to-end against a mock MMIO region in userspace. This is the same
- * logic against a real ioremap'd base instead of a malloc'd shim.
+ * Real hardware backend -- see carfield_mbox_hw.h for the register map
+ * (AlSaqr's single host<->OT OpenTitan mailbox, base 0x10404000) and the
+ * seam this implements.
+ *
+ * This replaces the earlier Carfield-specific implementation (id*stride
+ * multi-mailbox scheme, hardcoded IRQ 58, never confirmed against real
+ * hardware). AlSaqr's map comes from a generated device-tree node
+ * (alsaqr-fpga-ecs/dts/generate_dts.py) that titanssl_driver/driver.c
+ * already runs against in production -- see docs/TITANSSL_ANALYSIS.md.
  */
 
 static int real_mbox;
 module_param(real_mbox, int, 0444);
 MODULE_PARM_DESC(real_mbox, "Enable the real mailbox hardware backend (0=off, default). Mutually exclusive with mock_ot=1.");
 
-static void __iomem *mbox_unit_base;
+static void __iomem *mbox_base;
+static int mbox_irq;
 
-struct carfield_mbox_in {
-	unsigned int       id;
-	wait_queue_head_t  wq;
-	atomic_t           completed;
-	u32                letter0;
-	u32                letter1;
-};
-
-static struct carfield_mbox_in mbox_in_pulp;	/* id 5, provisioned, unread */
-static struct carfield_mbox_in mbox_in_ot;	/* id 7, the XFORM reply channel */
+static wait_queue_head_t mbox_wq;
+static atomic_t mbox_completed;
+static u32 mbox_reply_word0;
+static u32 mbox_reply_word1;
 
 static bool mbox_irq_requested;
+static bool mbox_probed;
+static bool mbox_driver_registered;
+
+/* ── Device tree match / IRQ acquisition ─────────────────────────────────
+ *
+ * Same shape as titanssl_driver/driver.c's ot_mbox_probe(): the mailbox's
+ * physical base address is a fixed constant (CARFIELD_MBOX_BASE_ADDR,
+ * confirmed real, see header), but the IRQ number is read from the DT node
+ * rather than hardcoded -- docs/TITANSSL_ANALYSIS.md §5 "RESERVE" flagged
+ * this as the pattern to adopt once a real DT source exists; the generated
+ * ot_mbox@10404000 node is that source now.
+ */
+static const struct of_device_id carfield_mbox_dt_ids[] = {
+	{ .compatible = CARFIELD_MBOX_DT_COMPATIBLE, },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, carfield_mbox_dt_ids);
+
+static int carfield_mbox_probe(struct platform_device *pdev)
+{
+	int irq = platform_get_irq(pdev, 0);
+
+	if (irq <= 0) {
+		pr_err("carfield_mbox_hw: probe: no IRQ resource on matched device (%d)\n", irq);
+		return irq < 0 ? irq : -EINVAL;
+	}
+
+	mbox_irq = irq;
+	mbox_probed = true;
+	pr_info("carfield_mbox_hw: probe: matched %s, irq=%d\n",
+		CARFIELD_MBOX_DT_COMPATIBLE, mbox_irq);
+	return 0;
+}
+
+static int carfield_mbox_remove(struct platform_device *pdev)
+{
+	return 0;
+}
+
+static struct platform_driver carfield_mbox_platform_driver = {
+	.probe  = carfield_mbox_probe,
+	.remove = carfield_mbox_remove,
+	.driver = {
+		.name           = "carfield-mbox-hw",
+		.of_match_table = carfield_mbox_dt_ids,
+	},
+};
 
 /* ── Register access ─────────────────────────────────────────────────────── */
 
-static inline void __iomem *mbox_reg(unsigned int id, unsigned long off)
+static inline void __iomem *mbox_reg(unsigned long off)
 {
-	return mbox_unit_base + carfield_mbox_reg_addr(id, off);
+	return mbox_base + off;
 }
 
-/* ── Outbound (host -> OT, mailbox id 1) ─────────────────────────────────── */
+/* ── Outbound (host -> OT) ────────────────────────────────────────────────
+ *
+ * Wire format: only WORD0 (header_phys) and WORD1 (cmd) of the 5-word MBOX
+ * area are used -- NOT titanssl's own 5-field ABI (magic/cmd+bitfield/
+ * session/pid), which belongs to titanssl's firmware, not ours. We have no
+ * OT firmware yet (see docs/QUESTIONS_FOR_TEAM.md), so this keeps the same
+ * minimal header_phys+cmd contract the mock backend already uses.
+ */
 
 void carfield_mbox_hw_send(u32 header_phys, u32 cmd)
 {
-	if (!mbox_unit_base) {
+	if (!mbox_base) {
 		pr_err("carfield_mbox_hw: send() called with no mapped hardware -- caller should have checked carfield_mbox_hw_enabled() first\n");
 		return;
 	}
@@ -60,39 +114,38 @@ void carfield_mbox_hw_send(u32 header_phys, u32 cmd)
 	 * discipline as carfield_mock_ot_send(). Without this, a reply that
 	 * arrives late for an ABANDONED previous request (e.g. one that
 	 * already timed out and was released) would leave completed=1 with
-	 * stale letter0/letter1 sitting in mbox_in_ot; the next send()'s
-	 * wait_completion() would then return immediately with that stale
-	 * reply instead of actually waiting for its own.
+	 * stale reply words sitting here; the next send()'s wait_completion()
+	 * would then return immediately with that stale reply instead of
+	 * actually waiting for its own.
 	 */
-	atomic_set(&mbox_in_ot.completed, 0);
+	atomic_set(&mbox_completed, 0);
 
-	writel(header_phys, mbox_reg(CARFIELD_MBOX_ID_HOST_TO_OT, CARFIELD_MBOX_REG_LETTER0));
-	writel(cmd,          mbox_reg(CARFIELD_MBOX_ID_HOST_TO_OT, CARFIELD_MBOX_REG_LETTER1));
+	writel(header_phys, mbox_reg(CARFIELD_MBOX_REG_WORD0));
+	writel(cmd,          mbox_reg(CARFIELD_MBOX_REG_WORD1));
 
 	/* Letters visible before the doorbell. Whether this needs to be more
 	 * than a plain data fence (real cache-management op, not yet known --
 	 * docs/QUESTIONS_FOR_TEAM.md item 4) is still open; wmb() is the same
-	 * conservative choice already made in carfield_mbox_sim. */
+	 * conservative choice already made for Carfield's own mailbox map. */
 	wmb();
 
-	/*
-	 * Doorbell is INT_SND_SET, not INT_RCV_SET, on ALL three directions
-	 * (Daniele, 2026-07-09) -- this corrects the mbox.h he separately
-	 * shared (2026-07-06), whose *active* mailbox_send() rings
-	 * INT_RCV_SET instead. That RCV_SET write is dead code on Daniele's
-	 * own confirmation (no interrupt line is wired to it); do not port
-	 * it. See docs/QUESTIONS_FOR_TEAM.md item 1 and
-	 * memory/project_alsaqr.md "Daniele'nin Yeni Cevapları" section.
-	 */
-	writel(1, mbox_reg(CARFIELD_MBOX_ID_HOST_TO_OT, CARFIELD_MBOX_REG_SND_SET));
+	writel(1, mbox_reg(CARFIELD_MBOX_REG_DOORBELL));
 }
 
-/* ── Inbound (OT -> host, mailbox id 7 = the XFORM reply channel) ───────── */
+/* ── Inbound (OT -> host) ─────────────────────────────────────────────────
+ *
+ * Reply convention: our own, not observed in titanssl (whose ABI has no
+ * symmetric reply-letters concept) -- OT is expected to place its reply
+ * into the same WORD0/WORD1 before signaling completion, mirroring what
+ * carfield_mock_ot.c already does. Needs firmware-side agreement once Tina's
+ * OT firmware exists; tracked as open alongside the other unconfirmed items
+ * in docs/QUESTIONS_FOR_TEAM.md.
+ */
 
 int carfield_mbox_hw_wait_completion(long timeout_ms)
 {
-	long left = wait_event_interruptible_timeout(mbox_in_ot.wq,
-			atomic_read(&mbox_in_ot.completed),
+	long left = wait_event_interruptible_timeout(mbox_wq,
+			atomic_read(&mbox_completed),
 			msecs_to_jiffies(timeout_ms));
 
 	if (left < 0)
@@ -100,44 +153,37 @@ int carfield_mbox_hw_wait_completion(long timeout_ms)
 	if (left == 0)
 		return -ETIMEDOUT;
 
-	atomic_set(&mbox_in_ot.completed, 0);
+	atomic_set(&mbox_completed, 0);
 	return 0;
 }
 
 void carfield_mbox_hw_read_reply(u32 *letter0, u32 *letter1)
 {
-	*letter0 = mbox_in_ot.letter0;
-	*letter1 = mbox_in_ot.letter1;
+	*letter0 = mbox_reply_word0;
+	*letter1 = mbox_reply_word1;
 }
 
 /*
- * Shared IRQ handler, one instance per inbound mailbox (registered twice,
- * once with &mbox_in_pulp and once with &mbox_in_ot as dev_id -- both
- * mailbox 5 and mailbox 7 funnel into the same host IRQ per the spec this
- * was written against). The STAT check is the demux: if this mailbox's
- * line isn't asserted, IRQ_NONE says "not mine, keep looking" to the other
- * shared-IRQ handler. Level-sensitive, so CLR must happen immediately or
- * the line (and the whole shared IRQ) stays wedged.
+ * IRQ handler. Single dedicated PLIC source per the DT node (interrupts =
+ * <10>, not shared with anything else per the generated DT) -- unlike the
+ * old Carfield map, there is no second inbound mailbox id to demux against,
+ * so this is requested without IRQF_SHARED.
  *
- * Letters are read here, under the handler, so a second doorbell can't
- * overwrite them before wait_completion()'s caller gets a chance to read
- * via carfield_mbox_hw_read_reply() -- mirrors carfield_mock_ot's
- * "channel holds exactly one in-flight reply" contract.
+ * Completion is reset here (not later in wait_completion()'s caller) on the
+ * same defensive assumption the old Carfield ISR used: if the line is
+ * level-sensitive, leaving it unacked until userspace gets around to it
+ * would wedge the interrupt. Reply words are read here too, before a
+ * hypothetical next request could overwrite them.
  */
 static irqreturn_t carfield_mbox_hw_irq(int irq, void *dev_id)
 {
-	struct carfield_mbox_in *mb = dev_id;
+	mbox_reply_word0 = readl(mbox_reg(CARFIELD_MBOX_REG_WORD0));
+	mbox_reply_word1 = readl(mbox_reg(CARFIELD_MBOX_REG_WORD1));
 
-	if (!readl(mbox_reg(mb->id, CARFIELD_MBOX_REG_SND_STAT)))
-		return IRQ_NONE;
+	writel(0, mbox_reg(CARFIELD_MBOX_REG_COMPLETION));
 
-	writel(1, mbox_reg(mb->id, CARFIELD_MBOX_REG_SND_CLR));
-
-	mb->letter0 = readl(mbox_reg(mb->id, CARFIELD_MBOX_REG_LETTER0));
-	mb->letter1 = readl(mbox_reg(mb->id, CARFIELD_MBOX_REG_LETTER1));
-
-	atomic_set(&mb->completed, 1);
-	wake_up_interruptible(&mb->wq);
+	atomic_set(&mbox_completed, 1);
+	wake_up_interruptible(&mbox_wq);
 
 	return IRQ_HANDLED;
 }
@@ -151,7 +197,7 @@ bool carfield_mbox_hw_requested(void)
 
 bool carfield_mbox_hw_enabled(void)
 {
-	return real_mbox != 0 && mbox_unit_base != NULL;
+	return real_mbox != 0 && mbox_base != NULL && mbox_irq_requested;
 }
 
 int carfield_mbox_hw_start(void)
@@ -161,88 +207,58 @@ int carfield_mbox_hw_start(void)
 	if (!real_mbox)
 		return 0; /* no behavior change when real_mbox=0 */
 
-	init_waitqueue_head(&mbox_in_pulp.wq);
-	atomic_set(&mbox_in_pulp.completed, 0);
-	mbox_in_pulp.id = CARFIELD_MBOX_ID_PULP_TO_HOST;
+	init_waitqueue_head(&mbox_wq);
+	atomic_set(&mbox_completed, 0);
 
-	init_waitqueue_head(&mbox_in_ot.wq);
-	atomic_set(&mbox_in_ot.completed, 0);
-	mbox_in_ot.id = CARFIELD_MBOX_ID_OT_TO_HOST;
+	ret = platform_driver_register(&carfield_mbox_platform_driver);
+	if (ret) {
+		pr_warn("carfield_mbox_hw: platform_driver_register failed: %d\n", ret);
+		return 0; /* non-fatal, same tolerance as the rest of carfield_init() */
+	}
+	mbox_driver_registered = true;
 
-	/*
-	 * CARFIELD_MBOX_UNIT_SIZE covers ids 0..7 by the confirmed
-	 * base+id*stride formula -- NOT a confirmed total size of the real
-	 * mailbox IP block. If the real unit's address span differs, this is
-	 * the one place to fix (see the header comment on the define).
-	 * Non-fatal on failure, same tolerance as soc_ctrl/int_cluster in
-	 * carfield.c -- carfield_mbox_hw_enabled() will correctly report
-	 * "not ready" and the ioctl returns -ENODEV instead of crashing.
-	 */
-	mbox_unit_base = ioremap(CARFIELD_MBOX_BASE_ADDR, CARFIELD_MBOX_UNIT_SIZE);
-	if (!mbox_unit_base) {
-		pr_warn("carfield_mbox_hw: ioremap mailbox unit failed (no hardware?)\n");
+	if (!mbox_probed) {
+		pr_warn("carfield_mbox_hw: no matching '%s' device in the device tree -- real hardware not present (QEMU/x86 test rig?), backend stays disabled\n",
+			CARFIELD_MBOX_DT_COMPATIBLE);
 		return 0;
 	}
 
-	/*
-	 * CARFIELD_MBOX_IRQ is now a confirmed value (58, see its definition
-	 * for sourcing) -- this branch is live on real hardware, not the
-	 * dead/skipped placeholder path CARFIELD_EOC_IRQ in carfield.c still
-	 * is. The `> 0` guard is kept as defense-in-depth (harmless if the
-	 * define is ever reverted to a placeholder again) rather than
-	 * removed outright.
-	 *
-	 * INT_SND_EN is deliberately written AFTER request_irq() succeeds for
-	 * each mailbox, not before: enabling the interrupt line at the
-	 * mailbox IP with no request_irq()'d handler behind it would be
-	 * pointless (nothing will service it -- STAT is still pollable
-	 * without EN per the register-map doc comment), and ordering it this
-	 * way means a request_irq() failure (e.g. IRQ 58 already claimed by
-	 * something else on the real platform) leaves the source disabled
-	 * rather than enabled-but-unhandled. Mirrors
-	 * carfield_mbox_sim/carfield_mbox.c's carfield_mbox_in_init() intent
-	 * (receiver enables its own INT_SND_EN; still unconfirmed which side
-	 * is supposed to own this write, docs/QUESTIONS_FOR_TEAM.md item 1)
-	 * but reordered relative to IRQ registration for that reason.
-	 */
-	if (CARFIELD_MBOX_IRQ > 0) {
-		ret = request_irq(CARFIELD_MBOX_IRQ, carfield_mbox_hw_irq,
-				   IRQF_SHARED, "carfield-mbox-pulp", &mbox_in_pulp);
-		if (ret) {
-			pr_warn("carfield_mbox_hw: request_irq(%d) failed for mailbox %d: %d\n",
-				CARFIELD_MBOX_IRQ, CARFIELD_MBOX_ID_PULP_TO_HOST, ret);
-		} else {
-			ret = request_irq(CARFIELD_MBOX_IRQ, carfield_mbox_hw_irq,
-					   IRQF_SHARED, "carfield-mbox-ot", &mbox_in_ot);
-			if (ret) {
-				pr_warn("carfield_mbox_hw: request_irq(%d) failed for mailbox %d: %d\n",
-					CARFIELD_MBOX_IRQ, CARFIELD_MBOX_ID_OT_TO_HOST, ret);
-				free_irq(CARFIELD_MBOX_IRQ, &mbox_in_pulp);
-			} else {
-				mbox_irq_requested = true;
-				writel(1, mbox_reg(CARFIELD_MBOX_ID_PULP_TO_HOST, CARFIELD_MBOX_REG_SND_EN));
-				writel(1, mbox_reg(CARFIELD_MBOX_ID_OT_TO_HOST,   CARFIELD_MBOX_REG_SND_EN));
-			}
-		}
-	} else {
-		pr_warn("carfield_mbox_hw: CARFIELD_MBOX_IRQ not configured yet, skipping request_irq (and INT_SND_EN)\n");
+	mbox_base = ioremap(CARFIELD_MBOX_BASE_ADDR, CARFIELD_MBOX_UNIT_SIZE);
+	if (!mbox_base) {
+		pr_warn("carfield_mbox_hw: ioremap mailbox region failed\n");
+		return 0;
 	}
 
-	pr_info("carfield_mbox_hw: real mailbox backend started (base=0x%lx)\n",
-		(unsigned long)CARFIELD_MBOX_BASE_ADDR);
+	ret = request_irq(mbox_irq, carfield_mbox_hw_irq, 0,
+			   "carfield-mbox-hw", NULL);
+	if (ret) {
+		pr_warn("carfield_mbox_hw: request_irq(%d) failed: %d\n",
+			mbox_irq, ret);
+		iounmap(mbox_base);
+		mbox_base = NULL;
+		return 0;
+	}
+
+	mbox_irq_requested = true;
+	pr_info("carfield_mbox_hw: real mailbox backend started (base=0x%lx, irq=%d)\n",
+		(unsigned long)CARFIELD_MBOX_BASE_ADDR, mbox_irq);
 	return 0;
 }
 
 void carfield_mbox_hw_stop(void)
 {
 	if (mbox_irq_requested) {
-		free_irq(CARFIELD_MBOX_IRQ, &mbox_in_ot);
-		free_irq(CARFIELD_MBOX_IRQ, &mbox_in_pulp);
+		free_irq(mbox_irq, NULL);
 		mbox_irq_requested = false;
 	}
 
-	if (mbox_unit_base) {
-		iounmap(mbox_unit_base);
-		mbox_unit_base = NULL;
+	if (mbox_base) {
+		iounmap(mbox_base);
+		mbox_base = NULL;
+	}
+
+	if (mbox_driver_registered) {
+		platform_driver_unregister(&carfield_mbox_platform_driver);
+		mbox_driver_registered = false;
 	}
 }
