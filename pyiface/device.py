@@ -1,7 +1,7 @@
 """device.py -- AlsaqrDevice: the public Python surface for /dev/alsaqr.
 
 Ratified-only surface (PYIFACE_SPEC.md R1): one method per existing ioctl
-(ping, cluster_run, paging_test). No generic submit(cmd, ...) -- none of
+(ping, paging_test). No generic submit(cmd, ...) -- none of
 the C request structs carries a cmd field, so there is nothing for such a
 parameter to bind to; see PYIFACE_SPEC.md's R1 correction. Mock-only
 conveniences (xform) live in demo.py, built on the same _paging_op()
@@ -71,9 +71,8 @@ class AlsaqrDevice:
         return req
 
     def _map_error(self, op, errnum, req):
-        """Most (op, errno) pairs map cleanly via abi.exception_for(). Two
-        exceptions, both from the same host<->OT seam: ALSAQR_OT_XFORM
-        and ALSAQR_CLUSTER_RUN's -EFAULT is ambiguous by construction
+        """Most (op, errno) pairs map cleanly via abi.exception_for(). One
+        exception: ALSAQR_OT_XFORM's -EFAULT is ambiguous by construction
         (alsaqr_mock_ot.c's ERR_MAP maps to the same errno
         copy_from_user/copy_to_user use) -- see PYIFACE_SPEC.md §3. The
         driver mutates the ioctl buffer in place whenever copy_to_user
@@ -81,9 +80,8 @@ class AlsaqrDevice:
         whether the reply field still holds the sentinel we pre-filled it
         with tells us which -EFAULT this was.
         """
-        if errnum == errno.EFAULT and op in ("xform", "cluster_run"):
-            reply_field = "ot_status" if op == "xform" else "result"
-            if getattr(req, reply_field, None) == abi.ALSAQR_OT_STATUS_NONE:
+        if errnum == errno.EFAULT and op == "xform":
+            if getattr(req, "ot_status", None) == abi.ALSAQR_OT_STATUS_NONE:
                 return abi.AlsaqrTransportError(
                     op,
                     errnum,
@@ -108,24 +106,6 @@ class AlsaqrDevice:
         req = abi.AlsaqrPing(value=value, echo=0)
         self._ioctl("ping", abi.ALSAQR_PING, req)
         return req.echo
-
-    def cluster_run(self, boot_addr):
-        """ALSAQR_CLUSTER_RUN: notify OpenTitan to boot the PULP cluster
-        from boot_addr (already loaded into L2). The host cannot boot the
-        cluster directly -- OpenTitan is the only thing that can, and how
-        it does so is out of scope/black box here (Daniele's 2026-07-30
-        code review, see project_alsaqr.md). Returns OT's raw reply status
-        word.
-
-        OPEN QUESTION (docs/QUESTIONS_FOR_TEAM.md): unconfirmed whether
-        this reply also means "cluster finished running", or only "OT
-        accepted the boot request".
-        """
-        req = abi.AlsaqrClusterRun(
-            boot_addr=boot_addr, result=abi.ALSAQR_OT_STATUS_NONE
-        )
-        self._ioctl("cluster_run", abi.ALSAQR_CLUSTER_RUN, req)
-        return req.result
 
     def paging_test(self, addr, size):
         """ALSAQR_PAGING_TEST: debug/test-only. Exercises the pin/build/

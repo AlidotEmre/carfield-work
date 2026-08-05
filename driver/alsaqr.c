@@ -5,11 +5,6 @@
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/uaccess.h>
-#include <linux/wait.h>
-#include <linux/jiffies.h>
-#include <linux/interrupt.h>
-#include <linux/io.h>
-#include <linux/mm.h>
 #include "alsaqr.h"
 #include "alsaqr_paging.h"
 #include "alsaqr_mock_ot.h"
@@ -17,59 +12,6 @@
 
 #define DEVICE_NAME "alsaqr"
 #define CLASS_NAME  "alsaqr"
-
-/* ── Physical memory map (from car_params.h + car_memory_map.h) ─────────── */
-#define SOC_CTRL_PHYS        0x20010000UL
-#define SOC_CTRL_SIZE        0x1000
-
-#define INT_CLUSTER_PHYS     0x50000000UL
-#define INT_CLUSTER_SIZE     0x800000
-
-#define L2_INTL_0_PHYS       0x78000000UL
-#define L2_INTL_0_SIZE       0x100000
-#define L2_CONT_0_PHYS       0x78100000UL
-#define L2_CONT_0_SIZE       0x100000
-#define L2_INTL_1_PHYS       0x78200000UL
-#define L2_INTL_1_SIZE       0x100000
-#define L2_CONT_1_PHYS       0x78300000UL
-#define L2_CONT_1_SIZE       0x100000
-
-#define SAFETY_ISLAND_PHYS   0x60000000UL
-#define SAFETY_ISLAND_SIZE   0x800000
-
-#define SPATZ_CLUSTER_PHYS   0x51000000UL
-#define SPATZ_CLUSTER_SIZE   0x800000
-
-/*
- * PULP cluster control register offsets (relative to soc_ctrl base), from
- * alsaqr/sw/include/regs/soc_ctrl.h. PULP_BOOT_ENABLE_OFF/FETCH_ENABLE_OFF
- * and the int_cluster boot-address/return-value offsets used to be written
- * directly by ALSAQR_CLUSTER_RUN -- removed 2026-07-30 along with the
- * soc_ctrl/int_cluster kernel ioremap that served them, now that booting the
- * cluster is OpenTitan's job, not the host's (see ALSAQR_CLUSTER_RUN's
- * handler below and memory/project_alsaqr.md). PULP_BUSY_OFF/PULP_EOC_OFF
- * were already unused before that (superseded by the EOC IRQ below) and are
- * kept only as register-map documentation.
- */
-#define PULP_BUSY_OFF          0xE4
-#define PULP_EOC_OFF           0xE8
-
-/*
- * PULP cluster's eoc_o signal reaches the host (Cheshire) as intr_ext_i[0]
- * ("pulpcl_eoc", level-sensitive) per the Carfield/Cheshire architecture
- * docs. The concrete PLIC source ID that maps to on Linux is NOT known yet
- * -- it depends on Cheshire's internal+external interrupt concatenation
- * order, which isn't in the public docs (needs the generated hardware
- * headers or confirmation from Daniele, same as the mailbox topology).
- *
- * 0 is not a valid IRQ number, so request_irq() below fails safely and
- * non-fatally (same tolerance alsaqr_mbox_hw.c's ioremap uses) until
- * this is filled in with the real PLIC source ID.
- */
-#define ALSAQR_EOC_IRQ           0
-
-/* EOC wait timeout, replaces the old busy-poll iteration count */
-#define ALSAQR_EOC_TIMEOUT_MS    5000
 
 /* How long ALSAQR_OT_XFORM waits for the mock kthread's reply --
  * comfortably longer than any reasonable mock_delay_ms test value, so a
@@ -79,35 +21,11 @@
 /* ── Driver state ────────────────────────────────────────────────────────── */
 struct alsaqr_dev {
 	struct cdev          cdev;
-	wait_queue_head_t    wq;
-	int                  wq_flag;
 };
 
 static dev_t          dev_num;
 static struct class  *alsaqr_class;
 static struct alsaqr_dev cdev_data;
-
-/* set once request_irq(ALSAQR_EOC_IRQ, ...) succeeds, so alsaqr_exit()
- * knows whether there is anything to free_irq() */
-static bool eoc_irq_requested;
-
-/* ── mmap region table ───────────────────────────────────────────────────── */
-struct mmap_region {
-	unsigned long pgoff;
-	phys_addr_t   phys;
-	size_t        size;
-};
-
-static const struct mmap_region mmap_table[] = {
-	{ ALSAQR_MMAP_SOC_CTRL,      SOC_CTRL_PHYS,      SOC_CTRL_SIZE      },
-	{ ALSAQR_MMAP_L2_INTL_0,     L2_INTL_0_PHYS,     L2_INTL_0_SIZE     },
-	{ ALSAQR_MMAP_L2_CONT_0,     L2_CONT_0_PHYS,     L2_CONT_0_SIZE     },
-	{ ALSAQR_MMAP_L2_INTL_1,     L2_INTL_1_PHYS,     L2_INTL_1_SIZE     },
-	{ ALSAQR_MMAP_L2_CONT_1,     L2_CONT_1_PHYS,     L2_CONT_1_SIZE     },
-	{ ALSAQR_MMAP_SAFETY_ISLAND,  SAFETY_ISLAND_PHYS, SAFETY_ISLAND_SIZE },
-	{ ALSAQR_MMAP_INT_CLUSTER,    INT_CLUSTER_PHYS,   INT_CLUSTER_SIZE   },
-	{ ALSAQR_MMAP_SPATZ_CLUSTER,  SPATZ_CLUSTER_PHYS, SPATZ_CLUSTER_SIZE },
-};
 
 /* ── File operations ─────────────────────────────────────────────────────── */
 
@@ -122,49 +40,6 @@ static int alsaqr_release(struct inode *inode, struct file *file)
 {
 	file->private_data = NULL;
 	return 0;
-}
-
-/*
- * mmap: maps a hardware region into user space.
- * User space selects the region via the page offset (vm_pgoff).
- * Matches car_linux_mmap.h from the Carfield repo.
- */
-static int alsaqr_mmap(struct file *file, struct vm_area_struct *vma)
-{
-	size_t req_size = vma->vm_end - vma->vm_start;
-	phys_addr_t phys = 0;
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(mmap_table); i++) {
-		if (mmap_table[i].pgoff == vma->vm_pgoff) {
-			phys = mmap_table[i].phys;
-			if (req_size > mmap_table[i].size)
-				return -EINVAL;
-			break;
-		}
-	}
-	if (!phys)
-		return -EINVAL;
-
-	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
-	return remap_pfn_range(vma, vma->vm_start,
-			       phys >> PAGE_SHIFT, req_size,
-			       vma->vm_page_prot);
-}
-
-/*
- * EOC interrupt handler: PULP cluster signals end-of-computation, wakes up
- * whoever is blocked in the ALSAQR_CLUSTER_RUN ioctl's wait_event below.
- * Replaces the old busy-poll of PULP_EOC_OFF.
- */
-static irqreturn_t alsaqr_eoc_isr(int irq, void *dev_id)
-{
-	struct alsaqr_dev *cdev = dev_id;
-
-	cdev->wq_flag = 1;
-	wake_up_interruptible(&cdev->wq);
-
-	return IRQ_HANDLED;
 }
 
 static long alsaqr_ioctl(struct file *file, unsigned int cmd,
@@ -186,71 +61,6 @@ static long alsaqr_ioctl(struct file *file, unsigned int cmd,
 		if (copy_to_user((void __user *)arg, &ping, sizeof(ping)))
 			return -EFAULT;
 		break;
-	}
-
-	/* ── Phase 2: notify OpenTitan to boot the PULP cluster ──────────
-	 *
-	 * The host used to poke soc_ctrl/int_cluster registers directly to
-	 * boot the cluster. Per Daniele's 2026-07-30 code review, the host
-	 * cannot reach the cluster directly -- OpenTitan is the one that
-	 * boots it, and how it does so is out of scope/black box here (see
-	 * memory/project_alsaqr.md). This case now only does the host<->OT
-	 * notification, reusing the exact same seam as
-	 * ALSAQR_OT_XFORM below, just with ALSAQR_OT_CMD_CLUSTER_BOOT
-	 * and no paging chain (boot_addr is already a raw L2
-	 * physical address, not a userspace-pinned buffer needing
-	 * page_to_phys translation).
-	 *
-	 * OPEN QUESTION (docs/QUESTIONS_FOR_TEAM.md): is this mailbox
-	 * completion (mbox7, OT -> host) the same signal as "cluster
-	 * finished running", or only "OT accepted the boot request"? The
-	 * pre-existing alsaqr_eoc_isr/ALSAQR_EOC_IRQ hardware-IRQ path
-	 * (cluster's own eoc_o signal, independent of OT) is left untouched
-	 * below -- it is no longer waited on here, but it isn't known yet
-	 * whether it's superseded by this mailbox reply or still needed as
-	 * a separate completion signal.
-	 */
-	case ALSAQR_CLUSTER_RUN: {
-		struct alsaqr_cluster_run req;
-		u32 letter0, letter1;
-		bool use_hw = alsaqr_mbox_hw_enabled();
-		int ret;
-
-		if (!use_hw && !alsaqr_mock_ot_enabled())
-			return -ENODEV;
-
-		if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
-			return -EFAULT;
-
-		if (use_hw)
-			alsaqr_mbox_hw_send(req.boot_addr, ALSAQR_OT_CMD_CLUSTER_BOOT);
-		else
-			alsaqr_mock_ot_send(req.boot_addr, ALSAQR_OT_CMD_CLUSTER_BOOT);
-
-		ret = use_hw ? alsaqr_mbox_hw_wait_completion(ALSAQR_EOC_TIMEOUT_MS)
-			     : alsaqr_mock_ot_wait_completion(ALSAQR_EOC_TIMEOUT_MS);
-		if (ret) {
-			req.result = ALSAQR_OT_STATUS_NONE;
-			if (copy_to_user((void __user *)arg, &req, sizeof(req)))
-				return -EFAULT;
-			return ret;
-		}
-
-		if (use_hw)
-			alsaqr_mbox_hw_read_reply(&letter0, &letter1);
-		else
-			alsaqr_mock_ot_read_reply(&letter0, &letter1);
-		(void)letter0; /* echoed boot_addr, nothing to cross-check it
-				* against here */
-
-		req.result = letter1;
-		if (copy_to_user((void __user *)arg, &req, sizeof(req)))
-			return -EFAULT;
-
-		if (use_hw)
-			return 0; /* real OT status semantics unknown, see XFORM's
-				   * identical caveat above */
-		return alsaqr_mock_ot_status_to_errno(letter1);
 	}
 
 	/* ── Paging chain test: pin/build/release, no mailbox/FPGA ─────── */
@@ -380,7 +190,6 @@ static const struct file_operations alsaqr_fops = {
 	.open           = alsaqr_open,
 	.release        = alsaqr_release,
 	.unlocked_ioctl = alsaqr_ioctl,
-	.mmap           = alsaqr_mmap,
 };
 
 /* ── Module init / exit ──────────────────────────────────────────────────── */
@@ -416,29 +225,6 @@ static int __init alsaqr_init(void)
 		goto err_cdev;
 	}
 
-	init_waitqueue_head(&cdev_data.wq);
-	cdev_data.wq_flag = 0;
-
-	/*
-	 * ALSAQR_EOC_IRQ is a placeholder (see its definition) until the
-	 * real PLIC source ID is known. 0 reliably fails as "invalid/busy"
-	 * on the x86_64 test rig this has been validated on, but IRQ 0 is
-	 * not universally invalid across architectures -- don't risk ever
-	 * actually requesting a real line 0 on whatever the target platform
-	 * turns out to be. Skip the call entirely instead.
-	 */
-	if (ALSAQR_EOC_IRQ > 0) {
-		ret = request_irq(ALSAQR_EOC_IRQ, alsaqr_eoc_isr, 0,
-				   DEVICE_NAME, &cdev_data);
-		if (ret)
-			pr_warn("alsaqr: request_irq(%d) failed: %d (EOC IRQ not wired up yet?)\n",
-				ALSAQR_EOC_IRQ, ret);
-		else
-			eoc_irq_requested = true;
-	} else {
-		pr_warn("alsaqr: ALSAQR_EOC_IRQ not configured yet, skipping request_irq\n");
-	}
-
 	/*
 	 * mock_ot=1 and real_mbox=1 are two backends for the same channel
 	 * seam -- never start both. Their internal state is fully separate
@@ -449,8 +235,7 @@ static int __init alsaqr_init(void)
 	 * exercised) instead of testing what its caller asked for -- exactly
 	 * the "never both backends live at once" spec requirement this
 	 * guards. Refuse both, leave the rest of the driver
-	 * (PING/CLUSTER_RUN/PAGING_TEST) usable rather than failing the
-	 * whole insmod.
+	 * (PING/PAGING_TEST) usable rather than failing the whole insmod.
 	 */
 	if (alsaqr_mock_ot_requested() && alsaqr_mbox_hw_requested()) {
 		pr_err("alsaqr: mock_ot=1 and real_mbox=1 both set -- mutually exclusive backends, starting neither\n");
@@ -481,9 +266,6 @@ static void __exit alsaqr_exit(void)
 {
 	alsaqr_mock_ot_stop();
 	alsaqr_mbox_hw_stop();
-
-	if (eoc_irq_requested)
-		free_irq(ALSAQR_EOC_IRQ, &cdev_data);
 
 	device_destroy(alsaqr_class, dev_num);
 	cdev_del(&cdev_data.cdev);

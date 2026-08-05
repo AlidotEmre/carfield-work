@@ -73,27 +73,6 @@ ALSAQR_PING = _iowr(ALSAQR_MAGIC, 0, AlsaqrPing)  # alsaqr.h:20
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: ALSAQR_CLUSTER_RUN -- alsaqr.h. Notifies OpenTitan to boot
-# the PULP cluster from boot_addr; the host cannot boot it directly
-# (Daniele's 2026-07-30 code review, see project_alsaqr.md) -- same
-# host<->OT mailbox seam as ALSAQR_OT_XFORM below, just with
-# ALSAQR_OT_CMD_CLUSTER_BOOT and no paging chain.
-# ---------------------------------------------------------------------------
-class AlsaqrClusterRun(ctypes.Structure):
-    _fields_ = [
-        ("boot_addr", ctypes.c_uint32),  # alsaqr.h:boot_addr
-        ("result", ctypes.c_uint32),  # alsaqr.h:result -- OT's reply status word
-    ]
-
-
-assert ctypes.sizeof(AlsaqrClusterRun) == 8, (
-    "AlsaqrClusterRun drifted from alsaqr.h struct alsaqr_cluster_run -- header changed?"
-)
-
-ALSAQR_CLUSTER_RUN = _iowr(ALSAQR_MAGIC, 1, AlsaqrClusterRun)  # alsaqr.h
-
-
-# ---------------------------------------------------------------------------
 # Paging chain -- alsaqr_paging.h
 # ---------------------------------------------------------------------------
 ALSAQR_PAGING_MAGIC = 0xCA4F1E1D  # alsaqr_paging.h:56
@@ -265,25 +244,8 @@ _XFORM_ERRNOS = {
     _errno.EIO: AlsaqrMockError,  # mock_force_err / unknown status, alsaqr_mock_ot.c:134
 }
 
-# Same host<->OT seam as xform (alsaqr.c's ALSAQR_CLUSTER_RUN case,
-# reworked 2026-07-30) -- no paging chain here (boot_addr is a raw phys
-# addr, not a pinned user buffer), so _XFORM_ERRNOS's paging-specific
-# EINVAL/E2BIG/ERANGE don't apply. EILSEQ/EBADMSG/EFAULT/ENXIO are only
-# reachable via mock_force_err in practice, since CLUSTER_BOOT has no
-# header/map to actually fail validation on (alsaqr_mock_ot.c).
-_CLUSTER_RUN_ERRNOS = {
-    _errno.ENODEV: AlsaqrNotAvailable,  # neither mock_ot nor real_mbox enabled
-    _errno.ETIMEDOUT: AlsaqrTimeout,  # OT wait_completion timeout
-    _errno.EILSEQ: AlsaqrBadHeader,
-    _errno.EBADMSG: AlsaqrGeometryError,
-    _errno.EFAULT: AlsaqrBadHeader,
-    _errno.ENXIO: AlsaqrBadHeader,
-    _errno.EIO: AlsaqrMockError,
-}
-
 ERRNO_TABLES = {
     "paging_test": _PAGING_TEST_ERRNOS,
-    "cluster_run": _CLUSTER_RUN_ERRNOS,
     "xform": _XFORM_ERRNOS,
 }
 

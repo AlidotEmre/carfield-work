@@ -12,24 +12,12 @@
 /*
  * Mock OpenTitan consumer -- see MOCK_OT_SPEC.md for the full contract.
  *
- * Doorbell: letter0 = header_phys (XFORM) or boot_addr (CLUSTER_BOOT),
- *           letter1 = command.
+ * Doorbell: letter0 = header_phys, letter1 = command.
  * Reply:    letter0 echoed, letter1 = status.
  */
 
 /* Doorbell command word (MOCK_OT_SPEC.md §3) */
 #define ALSAQR_OT_CMD_XFORM	0x0001
-
-/*
- * CLUSTER_BOOT: host -> OT notification that a binary is loaded in L2 at
- * letter0 (a raw physical address, NOT a alsaqr_mbox_header -- there is
- * no header/map chain for this command). What OT does to actually boot
- * the PULP cluster from it is out of scope/black box for the host driver
- * (Daniele's 2026-07-30 code review, see project_alsaqr.md). Used by
- * ALSAQR_CLUSTER_RUN (alsaqr.h) instead of the old direct
- * soc_ctrl/int_cluster register pokes.
- */
-#define ALSAQR_OT_CMD_CLUSTER_BOOT	0x0002
 
 /* Reply status codes (MOCK_OT_SPEC.md §5) -- distinct values so the host can
  * map each to a distinct errno (see alsaqr_mock_ot_status_to_errno()). */

@@ -858,12 +858,35 @@ firmware wire-formatının titanssl'e göre zenginleştirilmesi
 (`TITANSSL_ANALYSIS.md` §5 zaten "RESERVE, şimdi değil" demişti, karar
 değişmedi).
 
-**Henüz yapılmadı — carfield-VM doğrulaması bekliyor:** `driver/` ve
-`tests/`'te `make clean && make`, `mbox_reg_test`, `mock_ot=1` regresyonu
-(`mock_ot_test` + `test_pyiface.py`), `real_mbox=1` insmod (x86 VM'de gerçek
-DT düğümü olmayacağı için `-ENODEV` bekleniyor, bu normal), `dmesg` temizliği.
-Bu adımlar Windows'tan (kernel header'ı yok) çalıştırılamadı, kullanıcının
-VM'de çalıştırması gerekiyor.
+**carfield-VM'de doğrulandı (2026-08-05, aynı oturum, kullanıcı tarafından
+çalıştırıldı):**
+- `driver/` `make clean && make` — `carfield_mbox_hw.o` dahil hatasız
+  derlendi (gerçek 5.15.0-185-generic kernel).
+- `tests/mbox_reg_test` — PASS (Windows'takiyle aynı sonuç).
+- `mock_ot=1` regresyonu — `mock_ot_test` (3×4 case + 3 fault-injection)
+  ve `test_pyiface.py` (**10/10**) hepsi PASS; bu path'e dokunulmadığını
+  doğruluyor.
+- `sudo rmmod` sonrası `dmesg` temiz (`carfield: removed`, Bad-page/BUG/
+  leak yok).
+- `real_mbox=1` insmod — beklenen davranış tam gerçekleşti: bu VM'de
+  gerçek `ot_mbox` DT düğümü olmadığı için `carfield_mbox_hw: no matching
+  'opentitan_mbox-0.0' device in the device tree ... backend stays
+  disabled` uyarısı, crash/oops YOK, `/dev/carfield` yine hazır (üstteki
+  `carfield_mbox_hw_enabled()` false kalıyor, ioctl'ler `-ENODEV` dönecek
+  — ayrıca test edilmedi ama kod yolu bunu garanti ediyor).
+- `sudo rmmod` sonrası (platform_driver_unregister dahil) `dmesg` yine
+  temiz — sadece `carfield: removed`.
+
+**Sonuç: bu artımın tüm doğrulama adımları PASS.** DT eşleşmesi/gerçek
+register yazımı hâlâ test edilmedi (bunun için ya gerçek AlSaqr FPGA'sı ya
+da `alsaqr-fpga-ecs`'nin `make qemu` hedefinin `ot_mbox`'ı gerçekten
+modelleyip modellemediğinin araştırılması gerekiyor — kapsam dışı
+bırakıldı, sıradaki oturumun konusu olabilir).
+
+**How to apply:** Bu artımı tekrar "sadece Windows'ta gcc ile test edildi"
+diye sunma — gerçek 5.15 kernelde derlendi, mevcut regresyon (mock_ot +
+pyiface) PASS aldı, yeni `real_mbox=1` DT-probe yolu da crash etmeden
+tam beklenen şekilde davrandı.
 
 **Why:** Host'un Carfield cluster'ını doğrudan boot edememesi pratik bir
 ortam kısıtıydı, tasarım tercihi değil — bu pivotu tetikledi. Repo
@@ -877,6 +900,83 @@ sadece `alsaqr-migration` branch'i AlSaqr'a geçti. İkisini karıştırma. IRQ
 10'u da "teyit edildi ama FPGA'da hiç denenmedi" şeklinde sun — titanssl
 üretimde çalışıyor olması güçlü bir sinyal ama bizim kendi kodumuz henüz
 gerçek donanımda test edilmedi.
+
+## `alsaqr-migration` — İsim Geçişi ve Cheshire/Cluster Kodunun Kaldırılması (2026-08-05)
+
+Yukarıdaki "AlSaqr'a Pivot" bölümünün devamı, aynı gün, iki ek adım.
+
+**1) Rename (commit `8f3f869`):** Tüm `carfield_*`/`CARFIELD_*`/`Carfield`
+isimleri `alsaqr_*`/`ALSAQR_*`/`Alsaqr`'a çevrildi — dosya adları dahil
+(`driver/carfield.c/.h` → `alsaqr.c/.h`, `carfield_paging.*` →
+`alsaqr_paging.*`, `carfield_mock_ot.*` → `alsaqr_mock_ot.*`,
+`carfield_mbox_hw.*` → `alsaqr_mbox_hw.*`), `/dev/carfield` →
+`/dev/alsaqr`, modül `alsaqr-mod.ko`, ioctl magic byte `'F'` → `'A'`
+(C ve Python tarafında birlikte, senkron). carfield-VM'de tam regresyon
+PASS (build, `mbox_reg_test`, `mock_ot_test`, `test_pyiface.py` 10/10,
+`real_mbox=1` insmod/rmmod temiz).
+
+**Bilinçli dokunulmayanlar (hâlâ geçerli):** `docs/*.md`, `memory/*.md`,
+README'nin üst proje anlatısı, gerçek Carfield GitHub linkleri, ve kod
+içinde özellikle "eski Carfield haritası" gibi tarihsel karşılaştırma
+yapan yorumlar (`alsaqr_mbox_hw.c/.h`'de birkaç satır) — bunlar bilinçli
+olarak "Carfield" demeye devam ediyor, blind rename'le "Alsaqr" yapılırsa
+tarihi kayıt bozulur.
+
+**2) Cheshire/Carfield-cluster kod temizliği:** mmap tablosunu (`SOC_CTRL`,
+4×`L2_*`, `SAFETY_ISLAND`, `INT_CLUSTER`, `SPATZ_CLUSTER`) AlSaqr'ın gerçek
+DT'siyle (`alsaqr-fpga-ecs/dts/generate_dts.py`) çapraz kontrol ederken
+kullanıcı fark etti: **bu 8 bölgeden 7'sinin AlSaqr'da var olduğuna dair
+hiçbir kanıt yok.** Üç bağımsız kaynak tutarlı: (a) DT generator sadece
+SPM (`memory@1C000000`) + DRAM (`memory@80000000`) + CLINT + PLIC +
+debug-controller + UART + APB timer + `ot_mbox` tanımlıyor — cluster/L2/
+safety-island/soc_ctrl yok; (b) `alsaqr-fpga-ecs/Readme.md`'deki AlSaqr
+SDK boot akışında (bitstream → OpenOCD → minicom → GDB ile DTB+OpenSBI+
+Linux) bir "cluster boot" adımı yok; (c) titanssl driver (tek gerçek
+donanıkta çalışan referans) sadece SPM+DRAM+mailbox kullanıyor, cluster/L2
+kavramına hiç değinmiyor. Repo genelinde (`titanssl` dışı)
+`pulp|cluster|spatz|safety_island|soc_ctrl|L2` için grep yapıldı, tek
+eşleşme yine `generate_dts.py`'nin `"pulp,apb_timer"` compatible string'i
+(bir cluster değil, sadece bir IP çekirdeği adı).
+
+**Kullanıcının kararı:** Bunlar sadece "yanlış adres" değil, muhtemelen
+"AlSaqr'da böyle bir şey yok" — Cheshire'dan (Carfield'ın host-SoC
+wrapper'ı) miras kalmış, AlSaqr'da karşılığı teyit edilemeyen her şey
+kaldırıldı, adres düzeltmesi yapılmadı (düzeltilecek bilinen bir AlSaqr
+adresi yok çünkü bölgenin kendisi kanıtlanmadı).
+
+**Kaldırılanlar:** `ALSAQR_CLUSTER_RUN` ioctl'i + `struct
+alsaqr_cluster_run` (`alsaqr.h`); `ALSAQR_MMAP_*` (8 bölgenin hepsi) +
+`*_PHYS`/`*_SIZE` define'ları + `PULP_BUSY_OFF`/`PULP_EOC_OFF` +
+`alsaqr_mmap()`/`mmap_table[]`/`struct mmap_region` (`alsaqr.c`, hiçbir
+mmap bölgesi kalmadığı için fonksiyon tamamen kalktı, `alsaqr_fops`'tan
+`.mmap` silindi); `ALSAQR_EOC_IRQ`/`ALSAQR_EOC_TIMEOUT_MS`/
+`alsaqr_eoc_isr()`/`eoc_irq_requested` + `struct alsaqr_dev`'in
+`wq`/`wq_flag` alanları (grep ile doğrulandı, başka hiçbir yerde
+kullanılmıyorlardı); `ALSAQR_OT_CMD_CLUSTER_BOOT`
+(`alsaqr_mock_ot.h`) + mock kthread'in CLUSTER_BOOT dispatch dalı
+(`alsaqr_mock_ot.c`); pyiface'de `AlsaqrClusterRun` + `ALSAQR_CLUSTER_RUN`
++ `_CLUSTER_RUN_ERRNOS` + `cluster_run()` metodu; `tests/cluster_test.c`
+ve `sw/pulp_hello.c` (`git rm`, `sw/` klasörü boşaldığı için ağaçtan düştü).
+
+**Değişmeyenler:** `ALSAQR_PING`, `ALSAQR_PAGING_TEST`, `ALSAQR_OT_XFORM`
+ve arkalarındaki tüm paging/mailbox zinciri — bunlar L2/cluster/EOC'a hiç
+bağlı değildi, titanssl'in kendi doğrulanmış modeliyle (pin buffer →
+fiziksel header → mailbox → wait → read reply) birebir örtüşüyor.
+
+**Why:** Sistem gerçekten AlSaqr'da ayağa kalkacak — Cheshire'dan miras
+kalmış, kanıtlanmamış donanım varsayımlarını kodda bırakmak (isim doğru
+olsa bile) yanıltıcı, gerçek FPGA'da sessizce yanlış bölgeleri mmap'lemeye
+ya da var olmayan bir IRQ'yu request_irq etmeye çalışma riski taşırdı.
+
+**How to apply:** `ALSAQR_CLUSTER_RUN`/mmap/EOC IRQ'yu bu branch'te
+"henüz taşınmadı" diye sunma — bilinçli olarak silindi, kaldığı yer git
+geçmişinde (`alsaqr-migration`, bu commit'ten önce) duruyor. AlSaqr'da
+gerçekten bir PULP cluster olduğuna dair yeni bir kaynak bulunursa (bu
+repo dışında, ör. Daniele'nin AlSaqr eşdeğeri birinden) bu karar yeniden
+açılabilir — şu an "yok" değil "bulunamadı" diye çerçevelenmeli.
+`docs/QUESTIONS_FOR_TEAM.md`'nin cluster-boot/EOC/L2 ile ilgili maddeleri
+(2, 6, 9) bu branch için artık geçersiz ama dosyanın kendisi (Carfield'ın
+tarihi kaydı olarak) değiştirilmedi — `main` için hâlâ geçerliler.
 
 ## Önemli Kaynaklar
 

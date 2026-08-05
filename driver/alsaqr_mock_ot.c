@@ -65,10 +65,9 @@ MODULE_PARM_DESC(mock_corrupt_magic, "Test-only: corrupt the header magic before
 
 /* ── Channel state (single in-flight request) ────────────────────────────
  *
- * No locking: this mirrors the same "single user/single piece of hardware"
- * assumption already accepted for ALSAQR_CLUSTER_RUN's cdev_data.wq_flag
- * in alsaqr.c -- concurrent callers were a known, consciously-deferred
- * limitation there, not something this mock introduces new.
+ * No locking: "single user/single piece of hardware" is a known,
+ * consciously-deferred assumption throughout this driver (see
+ * memory/project_alsaqr.md), not something this mock introduces new.
  */
 struct alsaqr_mock_ot_channel {
 	struct task_struct *thread;
@@ -90,10 +89,10 @@ static struct alsaqr_mock_ot_channel mock_chan;
 
 void alsaqr_mock_ot_send(u32 header_phys, u32 cmd)
 {
-	/* Reset the completion flag before ringing the doorbell -- same
-	 * "clear before releasing" discipline as ALSAQR_CLUSTER_RUN's
-	 * wq_flag in alsaqr.c, so a reply that arrives between here and
-	 * wait_completion() below isn't missed. */
+	/* Reset the completion flag before ringing the doorbell, so a reply
+	 * that arrives between here and wait_completion() below isn't missed
+	 * (same "clear before releasing" discipline as alsaqr_mbox_hw.c's
+	 * real-hardware backend). */
 	mock_chan.completion_pending = false;
 	mock_chan.letter0_req = header_phys;
 	mock_chan.letter1_req = cmd;
@@ -279,7 +278,7 @@ static u32 alsaqr_mock_ot_process(u32 header_phys)
 static int alsaqr_mock_ot_thread_fn(void *arg)
 {
 	while (!kthread_should_stop()) {
-		u32 letter0, cmd, status;
+		u32 letter0, status;
 
 		wait_event_interruptible(mock_chan.doorbell_wq,
 			mock_chan.doorbell_pending || kthread_should_stop());
@@ -288,7 +287,9 @@ static int alsaqr_mock_ot_thread_fn(void *arg)
 			break;
 
 		letter0 = mock_chan.letter0_req;
-		cmd = mock_chan.letter1_req;
+		/* mock_chan.letter1_req (cmd) is unread -- ALSAQR_OT_CMD_XFORM
+		 * is the only command this mock services now that CLUSTER_BOOT
+		 * was removed (no AlSaqr equivalent, see memory/project_alsaqr.md). */
 		mock_chan.doorbell_pending = false;	/* ack/reset doorbell */
 
 		if (mock_delay_ms > 0)
@@ -302,16 +303,6 @@ static int alsaqr_mock_ot_thread_fn(void *arg)
 
 		if (mock_force_err) {
 			status = mock_force_err;
-		} else if (cmd == ALSAQR_OT_CMD_CLUSTER_BOOT) {
-			/*
-			 * CLUSTER_BOOT's letter0 is a raw L2 phys addr, not a
-			 * alsaqr_mbox_header -- there is no header/map to
-			 * validate here. What OT actually does to boot the
-			 * cluster from it is out of scope (black box, see
-			 * project_alsaqr.md); the mock can only ack that the
-			 * transport delivered the request.
-			 */
-			status = ALSAQR_MOCK_OT_OK;
 		} else {
 			status = alsaqr_mock_ot_process(letter0);
 		}

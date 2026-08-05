@@ -30,15 +30,36 @@ Carfield SoC için Linux kernel driver yazıyor. Proje başlangıcı: 22 Haziran
 ## Branch Notu: `alsaqr-migration` (2026-08-05)
 
 Bu branch'te hedef platform Carfield'dan AlSaqr'a kaydırılıyor (host
-Carfield ile Linux boot edemediği için). `driver/carfield_mbox_hw.c/.h`
-artık AlSaqr'ın gerçek device-tree'sindeki mailbox haritasını
-(`alsaqr-fpga-ecs/dts/generate_dts.py`: base `0x10404000`, IRQ DT'den
-dinamik alınıyor, `compatible = "opentitan_mbox-0.0"`) kullanıyor —
-Carfield'ın kendi haritası (`0x40000000`, hardcoded IRQ 58) DEĞİL. Detay:
-`memory/project_alsaqr.md` "AlSaqr'a Pivot" bölümü. `main`'deki Carfield
-register haritasını burada "eski/yanlış" diye sunma — iki ayrı platform
-hedefi, `main` hâlâ geçerli. İsimlendirme (`carfield_*` → `alsaqr_*`)
-bilinçli olarak ertelendi, mantık doğrulanmadan yapılmayacak.
+Carfield ile Linux boot edemediği için). Üç ardışık adımda ilerledi:
+
+1. **Mailbox HW backend'i gerçek AlSaqr register haritasına uyarlandı**
+   (`driver/alsaqr_mbox_hw.c/.h`, o zamanki adıyla `carfield_mbox_hw.*`):
+   AlSaqr'ın gerçek device-tree'sindeki mailbox haritası
+   (`alsaqr-fpga-ecs/dts/generate_dts.py`: base `0x10404000`, IRQ DT'den
+   dinamik alınıyor, `compatible = "opentitan_mbox-0.0"`) kullanılıyor —
+   Carfield'ın kendi haritası (`0x40000000`, hardcoded IRQ 58) DEĞİL.
+2. **Tüm `carfield_*`/`CARFIELD_*`/`Carfield` isimleri `alsaqr_*`/
+   `ALSAQR_*`/`Alsaqr`'a çevrildi** (dosya adları dahil, ör. `carfield.c`
+   → `alsaqr.c`), `/dev/carfield` → `/dev/alsaqr`, modül `alsaqr-mod.ko`.
+   Tarihsel/harici referanslar (docs/*.md, memory/*.md, gerçek Carfield
+   GitHub repo bağlantıları, "Carfield/Cheshire architecture" gibi o
+   zamanki bir donanım gerçeğini anlatan yorumlar) BİLİNÇLİ OLARAK
+   dokunulmadı — bunlar hâlâ doğru tarihi kayıt.
+3. **Cheshire/Carfield'a özgü, AlSaqr'da karşılığı teyit edilemeyen kod
+   tamamen kaldırıldı:** `ALSAQR_CLUSTER_RUN` ioctl'i, `soc_ctrl`/
+   4×`L2_*`/`safety_island`/`int_cluster`/`spatz_cluster` mmap bölgeleri,
+   `alsaqr_eoc_isr`/`ALSAQR_EOC_IRQ`, `ALSAQR_OT_CMD_CLUSTER_BOOT`,
+   `tests/cluster_test.c`, `sw/pulp_hello.c`. Kanıt: AlSaqr'ın gerçek
+   DT'sinde (`generate_dts.py`), kendi SDK boot akışında (`Readme.md`) ve
+   titanssl driver'da (tek gerçek donanık referans) bu bölgelerin/bir PULP
+   cluster'ın hiçbir izi yok — sadece SPM+DRAM+CLINT+PLIC+UART+timer+mailbox
+   var. Detay ve kanıt zinciri: `memory/project_alsaqr.md` ilgili bölüm.
+
+`main`'deki Carfield register haritasını/mimarisini burada "eski/yanlış"
+diye sunma — iki ayrı platform hedefi, `main` hâlâ geçerli ve kendi
+haliyle bırakılıyor. Kaldırılan kod git geçmişinde (`alsaqr-migration`
+branch'i, bu commit'ten önce) hâlâ kurtarılabilir — AlSaqr'da bir PULP
+cluster olduğuna dair yeni bir kanıt çıkarsa buraya dönülebilir.
 
 ## Kritik Teknik Kurallar (Unutturma)
 
@@ -63,15 +84,16 @@ bilinçli olarak ertelendi, mantık doğrulanmadan yapılmayacak.
    girer (2026-07-30, Daniele code review).** Cluster'a host'tan doğrudan
    register yazımı (`soc_ctrl`/`int_cluster` poke, EU üzerinden tetikleme
    vb.) önerme/yazma — bu artık geçersiz bir model. Host'un işi sadece
-   host<->OT mailbox bildirişimi (`CARFIELD_OT_CMD_CLUSTER_BOOT`,
-   bkz. `carfield_mock_ot.h`); OT'nin cluster'ı nasıl boot ettiği tamamen
-   black box, host driver'ın ilgi alanı dışında (Daniele: "you can
+   host<->OT mailbox bildirişimi; OT'nin cluster'ı nasıl boot ettiği
+   tamamen black box, host driver'ın ilgi alanı dışında (Daniele: "you can
    consider black box everything that's in charge of OT"). Detay:
    `memory/project_alsaqr.md` "Cluster Boot Mimarisi Değişti" bölümü.
-   **Açık kalan soru:** cluster'ın işi bittiğini host'a kim/nasıl bildirir
-   (mbox7 mi, ayrı EOC IRQ mu) — netleşmeden `carfield_eoc_isr`/
-   `CARFIELD_EOC_IRQ`'yu silme veya "kullanılmıyor" diye sunma (bkz.
-   `docs/QUESTIONS_FOR_TEAM.md` madde 9).
+   **`main` branch'i için hâlâ geçerli.** **`alsaqr-migration` branch'i
+   için ARTIK GEÇERSİZ (2026-08-05):** bu kural ve onu uygulayan kod
+   (`ALSAQR_CLUSTER_RUN`, `ALSAQR_OT_CMD_CLUSTER_BOOT`, `alsaqr_eoc_isr`)
+   tamamen kaldırıldı — AlSaqr'da zaten boot edilecek bir PULP cluster
+   olduğuna dair kanıt yok, "host cluster'ı nasıl boot eder" sorusu bu
+   platformda anlamsız (yukarıdaki Branch Notu'na bkz.).
 
 ## Referans Dosyalar
 
