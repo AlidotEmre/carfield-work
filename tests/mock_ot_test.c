@@ -1,13 +1,13 @@
 /*
- * End-to-end userspace test for CARFIELD_OT_XFORM (driver/carfield_mock_ot.c),
+ * End-to-end userspace test for ALSAQR_OT_XFORM (driver/alsaqr_mock_ot.c),
  * per MOCK_OT_SPEC.md §7. Requires the module loaded with mock_ot=1:
  *
- *   sudo insmod carfield-mod.ko mock_ot=1
+ *   sudo insmod alsaqr-mod.ko mock_ot=1
  *   sudo ./mock_ot_test
  *
  * Fault-injection params (mock_delay_ms, mock_no_reply, mock_force_err,
  * mock_bad_xform, mock_corrupt_magic) are toggled at runtime through
- * /sys/module/carfield_mod/parameters/<name> -- no need to reload the
+ * /sys/module/alsaqr_mod/parameters/<name> -- no need to reload the
  * module between cases.
  */
 
@@ -21,7 +21,7 @@
 #include <time.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include "../driver/carfield_mock_ot.h"
+#include "../driver/alsaqr_mock_ot.h"
 
 #define XOR_KEY   0x5A
 #define PAGE_SZ   4096
@@ -31,7 +31,7 @@ static int set_param(const char *name, const char *value)
 	char path[256];
 	int fd, ret;
 
-	snprintf(path, sizeof(path), "/sys/module/carfield_mod/parameters/%s", name);
+	snprintf(path, sizeof(path), "/sys/module/alsaqr_mod/parameters/%s", name);
 	fd = open(path, O_WRONLY);
 	if (fd < 0) {
 		perror(path);
@@ -60,7 +60,7 @@ static int run_and_check(int fd, uint8_t *buf, size_t total,
 			  const char *label)
 {
 	uint8_t *shadow;
-	struct carfield_ot_xform_req req;
+	struct alsaqr_ot_xform_req req;
 	size_t i;
 	int ok = 1;
 
@@ -75,7 +75,7 @@ static int run_and_check(int fd, uint8_t *buf, size_t total,
 	req.user_addr = (__u64)(unsigned long)(buf + off);
 	req.user_size = size;
 
-	if (ioctl(fd, CARFIELD_OT_XFORM, &req) < 0) {
+	if (ioctl(fd, ALSAQR_OT_XFORM, &req) < 0) {
 		printf("FAIL [%s]: ioctl error: %s (ot_status=%u)\n",
 		       label, strerror(errno), req.ot_status);
 		free(shadow);
@@ -170,11 +170,11 @@ static int case_mmap_aligned(int fd)
 }
 
 /* mock_no_reply: the ioctl must come back -ETIMEDOUT after roughly
- * CARFIELD_MOCK_OT_TIMEOUT_MS, not immediately and not hang forever. */
+ * ALSAQR_MOCK_OT_TIMEOUT_MS, not immediately and not hang forever. */
 static int case_timeout(int fd)
 {
 	uint8_t buf[PAGE_SZ];
-	struct carfield_ot_xform_req req;
+	struct alsaqr_ot_xform_req req;
 	struct timespec t0, t1;
 	double elapsed_ms;
 	int rc, ok = 0;
@@ -188,7 +188,7 @@ static int case_timeout(int fd)
 	req.user_size = sizeof(buf);
 
 	clock_gettime(CLOCK_MONOTONIC, &t0);
-	rc = ioctl(fd, CARFIELD_OT_XFORM, &req);
+	rc = ioctl(fd, ALSAQR_OT_XFORM, &req);
 	clock_gettime(CLOCK_MONOTONIC, &t1);
 	elapsed_ms = (t1.tv_sec - t0.tv_sec) * 1000.0 +
 		     (t1.tv_nsec - t0.tv_nsec) / 1e6;
@@ -199,7 +199,7 @@ static int case_timeout(int fd)
 	} else if (elapsed_ms < 1000.0) {
 		printf("FAIL [timeout]: returned in %.0fms, too fast for a real timeout\n",
 		       elapsed_ms);
-	} else if (req.ot_status != CARFIELD_OT_STATUS_NONE) {
+	} else if (req.ot_status != ALSAQR_OT_STATUS_NONE) {
 		printf("FAIL [timeout]: ot_status=%u, expected STATUS_NONE\n",
 		       req.ot_status);
 	} else {
@@ -214,12 +214,12 @@ static int case_timeout(int fd)
 
 /* mock_corrupt_magic: the one §5 rejection case -- proves validate() itself
  * actually rejects a bad header (unreachable through the normal producer,
- * which never builds a bad one; see carfield_mock_ot.c's comment on this
+ * which never builds a bad one; see alsaqr_mock_ot.c's comment on this
  * param). */
 static int case_rejection(int fd)
 {
 	uint8_t buf[PAGE_SZ];
-	struct carfield_ot_xform_req req;
+	struct alsaqr_ot_xform_req req;
 	int ok = 0;
 
 	fill_pattern(buf, sizeof(buf));
@@ -230,11 +230,11 @@ static int case_rejection(int fd)
 	req.user_addr = (__u64)(unsigned long)buf;
 	req.user_size = sizeof(buf);
 
-	if (ioctl(fd, CARFIELD_OT_XFORM, &req) == 0) {
+	if (ioctl(fd, ALSAQR_OT_XFORM, &req) == 0) {
 		printf("FAIL [rejection/magic]: ioctl unexpectedly succeeded\n");
-	} else if (errno != EILSEQ || req.ot_status != CARFIELD_MOCK_OT_ERR_MAGIC) {
+	} else if (errno != EILSEQ || req.ot_status != ALSAQR_MOCK_OT_ERR_MAGIC) {
 		printf("FAIL [rejection/magic]: errno=%s ot_status=%u (expected EILSEQ/%d)\n",
-		       strerror(errno), req.ot_status, CARFIELD_MOCK_OT_ERR_MAGIC);
+		       strerror(errno), req.ot_status, ALSAQR_MOCK_OT_ERR_MAGIC);
 	} else {
 		printf("PASS [rejection/magic]: rejected with ERR_MAGIC as a distinct errno\n");
 		ok = 1;
@@ -250,7 +250,7 @@ static int case_rejection(int fd)
 static int case_bad_xform_sanity(int fd)
 {
 	uint8_t buf[PAGE_SZ], shadow[PAGE_SZ];
-	struct carfield_ot_xform_req req;
+	struct alsaqr_ot_xform_req req;
 	size_t i;
 	int mismatch = 0, ok = 0;
 
@@ -264,7 +264,7 @@ static int case_bad_xform_sanity(int fd)
 	req.user_addr = (__u64)(unsigned long)buf;
 	req.user_size = sizeof(buf);
 
-	if (ioctl(fd, CARFIELD_OT_XFORM, &req) < 0) {
+	if (ioctl(fd, ALSAQR_OT_XFORM, &req) < 0) {
 		printf("FAIL [bad_xform sanity]: ioctl error: %s\n", strerror(errno));
 		set_param("mock_bad_xform", "0");
 		return 0;
@@ -292,9 +292,9 @@ int main(void)
 {
 	int fd, iter, failures = 0;
 
-	fd = open("/dev/carfield", O_RDWR);
+	fd = open("/dev/alsaqr", O_RDWR);
 	if (fd < 0) {
-		perror("open /dev/carfield");
+		perror("open /dev/alsaqr");
 		return 1;
 	}
 

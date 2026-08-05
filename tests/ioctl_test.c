@@ -3,24 +3,24 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <stdlib.h>
-#include "../driver/carfield.h"
+#include "../driver/alsaqr.h"
 
 int main(void)
 {
 	int fd;
-	struct carfield_ping ping;
+	struct alsaqr_ping ping;
 
-	fd = open("/dev/carfield", O_RDWR);
+	fd = open("/dev/alsaqr", O_RDWR);
 	if (fd < 0) {
-		perror("open /dev/carfield");
+		perror("open /dev/alsaqr");
 		return 1;
 	}
 
 	ping.value = 0xDEADBEEF;
 	ping.echo  = 0;
 
-	if (ioctl(fd, CARFIELD_PING, &ping) < 0) {
-		perror("ioctl CARFIELD_PING");
+	if (ioctl(fd, ALSAQR_PING, &ping) < 0) {
+		perror("ioctl ALSAQR_PING");
 		close(fd);
 		return 1;
 	}

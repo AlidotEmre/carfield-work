@@ -1,15 +1,15 @@
-#ifndef CARFIELD_PAGING_H
-#define CARFIELD_PAGING_H
+#ifndef ALSAQR_PAGING_H
+#define ALSAQR_PAGING_H
 
 #include <linux/types.h>
-#include "carfield.h"		/* CARFIELD_MAGIC, shared by every /dev/carfield ioctl */
+#include "alsaqr.h"		/* ALSAQR_MAGIC, shared by every /dev/alsaqr ioctl */
 
 #ifdef __KERNEL__
 #include <linux/mm_types.h>
 #endif
 
 /*
- * Carfield paging chain.
+ * Alsaqr paging chain.
  *
  * The mailbox only carries a single 32-bit physical address: the address
  * of a "header page". Everything the receiver (PULP/OpenTitan) needs to
@@ -17,7 +17,7 @@
  *
  * Reference: alsaqr-fpga-ecs/develop/titanssl/titanssl_driver/{driver.c,
  * titanssl.h} implements the same chain for three buffer categories
- * (input/output/meta). Carfield's current use case is a single encrypted
+ * (input/output/meta). Alsaqr's current use case is a single encrypted
  * blob, so this is the single-category version of that struct.
  *
  * Field meaning (mirrors titanssl_mbox_header_t):
@@ -30,7 +30,7 @@
  *         each holding the physical address of one of the buffer's pages
  *         (in order). The receiver walks this array to find every page.
  */
-struct carfield_mbox_header {
+struct alsaqr_mbox_header {
 	__u32 magic;
 	__u32 dsz;
 	__u32 nop;
@@ -47,21 +47,21 @@ struct carfield_mbox_header {
 	 * for whatever shows up next (session/PID multiplexing fields are
 	 * the leading candidate, see TITANSSL_ANALYSIS.md §5 RESERVE). No
 	 * consumer is required to look at these yet -- see the mock's
-	 * carfield_mock_ot_process() for where they're read and ignored.
+	 * alsaqr_mock_ot_process() for where they're read and ignored.
 	 */
 	__u32 version;
 	__u32 reserved[2];
 } __attribute__((__packed__));
 
-#define CARFIELD_PAGING_MAGIC 0xCA4F1E1D
-#define CARFIELD_PAGING_HEADER_VERSION 1
+#define ALSAQR_PAGING_MAGIC 0xCA4F1E1D
+#define ALSAQR_PAGING_HEADER_VERSION 1
 
 /*
  * Page-layout math for a [data_addr, data_addr + data_size) user range.
  * Pure arithmetic, no kernel/page-table access -- computed once and reused
  * by both the pinning step and the header-fill step.
  */
-struct carfield_page_info {
+struct alsaqr_page_info {
 	unsigned long data_addr;
 	unsigned long data_size;
 	unsigned long page_size;
@@ -71,25 +71,25 @@ struct carfield_page_info {
 	unsigned long lps;
 };
 
-void carfield_paging_compute_info(unsigned long data_addr,
+void alsaqr_paging_compute_info(unsigned long data_addr,
 				   unsigned long data_size,
 				   unsigned long page_size,
-				   struct carfield_page_info *info);
+				   struct alsaqr_page_info *info);
 
 #ifdef __KERNEL__
 
 /*
- * Tracks every resource a single carfield_paging_build() call allocates,
- * so carfield_paging_release() can unwind all of it in one place.
+ * Tracks every resource a single alsaqr_paging_build() call allocates,
+ * so alsaqr_paging_release() can unwind all of it in one place.
  */
-struct carfield_paging_handle {
-	struct carfield_page_info info;
+struct alsaqr_paging_handle {
+	struct alsaqr_page_info info;
 
 	struct page *header_page;
 	struct page *map_page;
 	struct page **data_pages;	/* nop entries, pinned */
 
-	struct carfield_mbox_header *header;	/* kmap of header_page */
+	struct alsaqr_mbox_header *header;	/* kmap of header_page */
 	__u32 *map;				/* kmap of map_page */
 
 	phys_addr_t header_phys;	/* what to write into the mailbox */
@@ -99,16 +99,16 @@ struct carfield_paging_handle {
  * Pin the user range [user_addr, user_addr + user_size), build the header
  * + map pages, and fill them in. On success *out is ready to hand off:
  * out->header_phys is the 32-bit-safe physical address to send via the
- * mailbox. Call carfield_paging_release() exactly once when done, whether
+ * mailbox. Call alsaqr_paging_release() exactly once when done, whether
  * this returns success or failure partway through is handled internally.
  *
  * write: pass true if the receiver will write back into this buffer
  * (FOLL_WRITE for get_user_pages), false for read-only input buffers.
  */
-int carfield_paging_build(unsigned long user_addr, unsigned long user_size,
-			   bool write, struct carfield_paging_handle *out);
+int alsaqr_paging_build(unsigned long user_addr, unsigned long user_size,
+			   bool write, struct alsaqr_paging_handle *out);
 
-void carfield_paging_release(struct carfield_paging_handle *h);
+void alsaqr_paging_release(struct alsaqr_paging_handle *h);
 
 #endif /* __KERNEL__ */
 
@@ -121,7 +121,7 @@ void carfield_paging_release(struct carfield_paging_handle *h);
  * mailbox. Validates the pin/build/release chain on real hardware-backed
  * physical addresses, no FPGA required.
  */
-struct carfield_paging_test_req {
+struct alsaqr_paging_test_req {
 	__u64 user_addr;
 	__u64 user_size;
 
@@ -136,7 +136,7 @@ struct carfield_paging_test_req {
 	__u64 last_page_phys;	/* map[nop-1] */
 };
 
-#define CARFIELD_PAGING_TEST \
-	_IOWR(CARFIELD_MAGIC, 2, struct carfield_paging_test_req)
+#define ALSAQR_PAGING_TEST \
+	_IOWR(ALSAQR_MAGIC, 2, struct alsaqr_paging_test_req)
 
-#endif /* CARFIELD_PAGING_H */
+#endif /* ALSAQR_PAGING_H */

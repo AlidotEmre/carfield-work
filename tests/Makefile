@@ -9,8 +9,8 @@ ioctl_test: ioctl_test.c
 cluster_test: cluster_test.c
 	$(CC) $(CFLAGS) -o $@ $<
 
-paging_math_test: paging_math_test.c ../driver/carfield_paging_math.c
-	$(CC) $(CFLAGS) -o $@ paging_math_test.c ../driver/carfield_paging_math.c
+paging_math_test: paging_math_test.c ../driver/alsaqr_paging_math.c
+	$(CC) $(CFLAGS) -o $@ paging_math_test.c ../driver/alsaqr_paging_math.c
 
 paging_ioctl_test: paging_ioctl_test.c
 	$(CC) $(CFLAGS) -o $@ $<
@@ -18,7 +18,7 @@ paging_ioctl_test: paging_ioctl_test.c
 mock_ot_test: mock_ot_test.c
 	$(CC) $(CFLAGS) -o $@ $<
 
-mbox_reg_test: mbox_reg_test.c ../driver/carfield_mbox_hw.h
+mbox_reg_test: mbox_reg_test.c ../driver/alsaqr_mbox_hw.h
 	$(CC) $(CFLAGS) -o $@ mbox_reg_test.c
 
 clean:

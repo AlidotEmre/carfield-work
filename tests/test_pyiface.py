@@ -1,19 +1,19 @@
-"""End-to-end Python test suite for /dev/carfield, mirroring
+"""End-to-end Python test suite for /dev/alsaqr, mirroring
 MOCK_OT_SPEC.md §7 (and tests/mock_ot_test.c) from userspace Python, plus
 the Python-specific cases in PYIFACE_SPEC.md §7.
 
 Requires the module loaded with mock_ot=1:
 
-    sudo insmod carfield-mod.ko mock_ot=1
+    sudo insmod alsaqr-mod.ko mock_ot=1
     sudo pytest tests/test_pyiface.py
 
 Fault-injection params are toggled at runtime through
-/sys/module/carfield_mod/parameters/<name> (all 0644 except mock_ot
+/sys/module/alsaqr_mod/parameters/<name> (all 0644 except mock_ot
 itself, which is load-time only -- see PYIFACE_SPEC.md §7).
 
 Not covered here (manual step, same as mock_ot_test.c): after the suite
-passes, `rmmod carfield-mod` and check `sudo dmesg` for leak/Bad-page
-warnings. A test process holding /dev/carfield open can't meaningfully
+passes, `rmmod alsaqr-mod` and check `sudo dmesg` for leak/Bad-page
+warnings. A test process holding /dev/alsaqr open can't meaningfully
 rmmod itself.
 """
 
@@ -23,11 +23,11 @@ import os
 import pytest
 
 from pyiface import abi, demo
-from pyiface.device import CarfieldDevice
+from pyiface.device import AlsaqrDevice
 
 XOR_KEY = 0x5A
 PAGE_SIZE = 4096
-_PARAM_DIR = "/sys/module/carfield_mod/parameters"
+_PARAM_DIR = "/sys/module/alsaqr_mod/parameters"
 
 
 def _set_param(name, value):
@@ -42,9 +42,9 @@ def _fill_pattern(n):
 @pytest.fixture(scope="module")
 def dev():
     try:
-        d = CarfieldDevice()
+        d = AlsaqrDevice()
     except OSError as e:
-        pytest.skip(f"/dev/carfield not available: {e}")
+        pytest.skip(f"/dev/alsaqr not available: {e}")
         return
     yield d
     d.close()
@@ -60,8 +60,8 @@ def _run_and_check(dev, total, off, size, key=XOR_KEY):
     buf[0:total] = shadow
 
     dev._paging_op(
-        "xform", abi.CARFIELD_OT_XFORM, abi.CarfieldOtXformReq,
-        addr + off, size, ot_status=abi.CARFIELD_OT_STATUS_NONE,
+        "xform", abi.ALSAQR_OT_XFORM, abi.AlsaqrOtXformReq,
+        addr + off, size, ot_status=abi.ALSAQR_OT_STATUS_NONE,
     )
 
     got = bytes(buf[0:total])
@@ -100,7 +100,7 @@ def test_demo_xform_roundtrip(dev):
 def test_mock_no_reply_times_out(dev):
     _set_param("mock_no_reply", "1")
     try:
-        with pytest.raises(abi.CarfieldTimeout):
+        with pytest.raises(abi.AlsaqrTimeout):
             demo.xform(dev, _fill_pattern(64))
     finally:
         _set_param("mock_no_reply", "0")
@@ -108,10 +108,10 @@ def test_mock_no_reply_times_out(dev):
 
 def test_mock_corrupt_magic_rejected(dev):
     """The one §5 rejection case reachable through the normal ioctl path
-    (see carfield_mock_ot.c's comment on this test-only param)."""
+    (see alsaqr_mock_ot.c's comment on this test-only param)."""
     _set_param("mock_corrupt_magic", "1")
     try:
-        with pytest.raises(abi.CarfieldBadHeader):
+        with pytest.raises(abi.AlsaqrBadHeader):
             demo.xform(dev, _fill_pattern(64))
     finally:
         _set_param("mock_corrupt_magic", "0")
@@ -131,19 +131,19 @@ def test_mock_bad_xform_fails_verification(dev):
 
 
 def test_zero_size_is_bad_request(dev):
-    """size==0 -> -EINVAL -> CarfieldBadRequest (carfield_paging.c:65-66)."""
+    """size==0 -> -EINVAL -> AlsaqrBadRequest (alsaqr_paging.c:65-66)."""
     _buf, addr = dev.alloc(PAGE_SIZE)
-    with pytest.raises(abi.CarfieldBadRequest):
+    with pytest.raises(abi.AlsaqrBadRequest):
         dev.paging_test(addr, 0)
 
 
 def test_oversize_is_size_error(dev):
-    """nop > CARFIELD_PAGING_MAP_MAX_ENTRIES (1024) at fpo=0 -> -E2BIG ->
-    CarfieldSizeError (carfield_paging.c:78-79, fixed in commit 2cca9f7 to
+    """nop > ALSAQR_PAGING_MAP_MAX_ENTRIES (1024) at fpo=0 -> -E2BIG ->
+    AlsaqrSizeError (alsaqr_paging.c:78-79, fixed in commit 2cca9f7 to
     return -E2BIG instead of -EINVAL specifically so this is distinct from
     test_zero_size_is_bad_request above). This never reaches the mock's
     own ERR_NOP path -- see PYIFACE_SPEC.md §7."""
-    size = (abi.CARFIELD_PAGING_MAP_MAX_ENTRIES + 1) * PAGE_SIZE
+    size = (abi.ALSAQR_PAGING_MAP_MAX_ENTRIES + 1) * PAGE_SIZE
     _buf, addr = dev.alloc(size)
-    with pytest.raises(abi.CarfieldSizeError):
+    with pytest.raises(abi.AlsaqrSizeError):
         dev.paging_test(addr, size)

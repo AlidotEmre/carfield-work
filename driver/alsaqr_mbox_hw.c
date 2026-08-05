@@ -1,4 +1,4 @@
-#include "carfield_mbox_hw.h"
+#include "alsaqr_mbox_hw.h"
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -14,7 +14,7 @@
 #include <linux/of_device.h>
 
 /*
- * Real hardware backend -- see carfield_mbox_hw.h for the register map
+ * Real hardware backend -- see alsaqr_mbox_hw.h for the register map
  * (AlSaqr's single host<->OT OpenTitan mailbox, base 0x10404000) and the
  * seam this implements.
  *
@@ -44,45 +44,45 @@ static bool mbox_driver_registered;
 /* ── Device tree match / IRQ acquisition ─────────────────────────────────
  *
  * Same shape as titanssl_driver/driver.c's ot_mbox_probe(): the mailbox's
- * physical base address is a fixed constant (CARFIELD_MBOX_BASE_ADDR,
+ * physical base address is a fixed constant (ALSAQR_MBOX_BASE_ADDR,
  * confirmed real, see header), but the IRQ number is read from the DT node
  * rather than hardcoded -- docs/TITANSSL_ANALYSIS.md §5 "RESERVE" flagged
  * this as the pattern to adopt once a real DT source exists; the generated
  * ot_mbox@10404000 node is that source now.
  */
-static const struct of_device_id carfield_mbox_dt_ids[] = {
-	{ .compatible = CARFIELD_MBOX_DT_COMPATIBLE, },
+static const struct of_device_id alsaqr_mbox_dt_ids[] = {
+	{ .compatible = ALSAQR_MBOX_DT_COMPATIBLE, },
 	{ }
 };
-MODULE_DEVICE_TABLE(of, carfield_mbox_dt_ids);
+MODULE_DEVICE_TABLE(of, alsaqr_mbox_dt_ids);
 
-static int carfield_mbox_probe(struct platform_device *pdev)
+static int alsaqr_mbox_probe(struct platform_device *pdev)
 {
 	int irq = platform_get_irq(pdev, 0);
 
 	if (irq <= 0) {
-		pr_err("carfield_mbox_hw: probe: no IRQ resource on matched device (%d)\n", irq);
+		pr_err("alsaqr_mbox_hw: probe: no IRQ resource on matched device (%d)\n", irq);
 		return irq < 0 ? irq : -EINVAL;
 	}
 
 	mbox_irq = irq;
 	mbox_probed = true;
-	pr_info("carfield_mbox_hw: probe: matched %s, irq=%d\n",
-		CARFIELD_MBOX_DT_COMPATIBLE, mbox_irq);
+	pr_info("alsaqr_mbox_hw: probe: matched %s, irq=%d\n",
+		ALSAQR_MBOX_DT_COMPATIBLE, mbox_irq);
 	return 0;
 }
 
-static int carfield_mbox_remove(struct platform_device *pdev)
+static int alsaqr_mbox_remove(struct platform_device *pdev)
 {
 	return 0;
 }
 
-static struct platform_driver carfield_mbox_platform_driver = {
-	.probe  = carfield_mbox_probe,
-	.remove = carfield_mbox_remove,
+static struct platform_driver alsaqr_mbox_platform_driver = {
+	.probe  = alsaqr_mbox_probe,
+	.remove = alsaqr_mbox_remove,
 	.driver = {
-		.name           = "carfield-mbox-hw",
-		.of_match_table = carfield_mbox_dt_ids,
+		.name           = "alsaqr-mbox-hw",
+		.of_match_table = alsaqr_mbox_dt_ids,
 	},
 };
 
@@ -102,16 +102,16 @@ static inline void __iomem *mbox_reg(unsigned long off)
  * minimal header_phys+cmd contract the mock backend already uses.
  */
 
-void carfield_mbox_hw_send(u32 header_phys, u32 cmd)
+void alsaqr_mbox_hw_send(u32 header_phys, u32 cmd)
 {
 	if (!mbox_base) {
-		pr_err("carfield_mbox_hw: send() called with no mapped hardware -- caller should have checked carfield_mbox_hw_enabled() first\n");
+		pr_err("alsaqr_mbox_hw: send() called with no mapped hardware -- caller should have checked alsaqr_mbox_hw_enabled() first\n");
 		return;
 	}
 
 	/*
 	 * Reset before ringing the doorbell -- same "clear before releasing"
-	 * discipline as carfield_mock_ot_send(). Without this, a reply that
+	 * discipline as alsaqr_mock_ot_send(). Without this, a reply that
 	 * arrives late for an ABANDONED previous request (e.g. one that
 	 * already timed out and was released) would leave completed=1 with
 	 * stale reply words sitting here; the next send()'s wait_completion()
@@ -120,8 +120,8 @@ void carfield_mbox_hw_send(u32 header_phys, u32 cmd)
 	 */
 	atomic_set(&mbox_completed, 0);
 
-	writel(header_phys, mbox_reg(CARFIELD_MBOX_REG_WORD0));
-	writel(cmd,          mbox_reg(CARFIELD_MBOX_REG_WORD1));
+	writel(header_phys, mbox_reg(ALSAQR_MBOX_REG_WORD0));
+	writel(cmd,          mbox_reg(ALSAQR_MBOX_REG_WORD1));
 
 	/* Letters visible before the doorbell. Whether this needs to be more
 	 * than a plain data fence (real cache-management op, not yet known --
@@ -129,7 +129,7 @@ void carfield_mbox_hw_send(u32 header_phys, u32 cmd)
 	 * conservative choice already made for Carfield's own mailbox map. */
 	wmb();
 
-	writel(1, mbox_reg(CARFIELD_MBOX_REG_DOORBELL));
+	writel(1, mbox_reg(ALSAQR_MBOX_REG_DOORBELL));
 }
 
 /* ── Inbound (OT -> host) ─────────────────────────────────────────────────
@@ -137,12 +137,12 @@ void carfield_mbox_hw_send(u32 header_phys, u32 cmd)
  * Reply convention: our own, not observed in titanssl (whose ABI has no
  * symmetric reply-letters concept) -- OT is expected to place its reply
  * into the same WORD0/WORD1 before signaling completion, mirroring what
- * carfield_mock_ot.c already does. Needs firmware-side agreement once Tina's
+ * alsaqr_mock_ot.c already does. Needs firmware-side agreement once Tina's
  * OT firmware exists; tracked as open alongside the other unconfirmed items
  * in docs/QUESTIONS_FOR_TEAM.md.
  */
 
-int carfield_mbox_hw_wait_completion(long timeout_ms)
+int alsaqr_mbox_hw_wait_completion(long timeout_ms)
 {
 	long left = wait_event_interruptible_timeout(mbox_wq,
 			atomic_read(&mbox_completed),
@@ -157,7 +157,7 @@ int carfield_mbox_hw_wait_completion(long timeout_ms)
 	return 0;
 }
 
-void carfield_mbox_hw_read_reply(u32 *letter0, u32 *letter1)
+void alsaqr_mbox_hw_read_reply(u32 *letter0, u32 *letter1)
 {
 	*letter0 = mbox_reply_word0;
 	*letter1 = mbox_reply_word1;
@@ -175,12 +175,12 @@ void carfield_mbox_hw_read_reply(u32 *letter0, u32 *letter1)
  * would wedge the interrupt. Reply words are read here too, before a
  * hypothetical next request could overwrite them.
  */
-static irqreturn_t carfield_mbox_hw_irq(int irq, void *dev_id)
+static irqreturn_t alsaqr_mbox_hw_irq(int irq, void *dev_id)
 {
-	mbox_reply_word0 = readl(mbox_reg(CARFIELD_MBOX_REG_WORD0));
-	mbox_reply_word1 = readl(mbox_reg(CARFIELD_MBOX_REG_WORD1));
+	mbox_reply_word0 = readl(mbox_reg(ALSAQR_MBOX_REG_WORD0));
+	mbox_reply_word1 = readl(mbox_reg(ALSAQR_MBOX_REG_WORD1));
 
-	writel(0, mbox_reg(CARFIELD_MBOX_REG_COMPLETION));
+	writel(0, mbox_reg(ALSAQR_MBOX_REG_COMPLETION));
 
 	atomic_set(&mbox_completed, 1);
 	wake_up_interruptible(&mbox_wq);
@@ -190,17 +190,17 @@ static irqreturn_t carfield_mbox_hw_irq(int irq, void *dev_id)
 
 /* ── Lifecycle ────────────────────────────────────────────────────────────── */
 
-bool carfield_mbox_hw_requested(void)
+bool alsaqr_mbox_hw_requested(void)
 {
 	return real_mbox != 0;
 }
 
-bool carfield_mbox_hw_enabled(void)
+bool alsaqr_mbox_hw_enabled(void)
 {
 	return real_mbox != 0 && mbox_base != NULL && mbox_irq_requested;
 }
 
-int carfield_mbox_hw_start(void)
+int alsaqr_mbox_hw_start(void)
 {
 	int ret;
 
@@ -210,29 +210,29 @@ int carfield_mbox_hw_start(void)
 	init_waitqueue_head(&mbox_wq);
 	atomic_set(&mbox_completed, 0);
 
-	ret = platform_driver_register(&carfield_mbox_platform_driver);
+	ret = platform_driver_register(&alsaqr_mbox_platform_driver);
 	if (ret) {
-		pr_warn("carfield_mbox_hw: platform_driver_register failed: %d\n", ret);
-		return 0; /* non-fatal, same tolerance as the rest of carfield_init() */
+		pr_warn("alsaqr_mbox_hw: platform_driver_register failed: %d\n", ret);
+		return 0; /* non-fatal, same tolerance as the rest of alsaqr_init() */
 	}
 	mbox_driver_registered = true;
 
 	if (!mbox_probed) {
-		pr_warn("carfield_mbox_hw: no matching '%s' device in the device tree -- real hardware not present (QEMU/x86 test rig?), backend stays disabled\n",
-			CARFIELD_MBOX_DT_COMPATIBLE);
+		pr_warn("alsaqr_mbox_hw: no matching '%s' device in the device tree -- real hardware not present (QEMU/x86 test rig?), backend stays disabled\n",
+			ALSAQR_MBOX_DT_COMPATIBLE);
 		return 0;
 	}
 
-	mbox_base = ioremap(CARFIELD_MBOX_BASE_ADDR, CARFIELD_MBOX_UNIT_SIZE);
+	mbox_base = ioremap(ALSAQR_MBOX_BASE_ADDR, ALSAQR_MBOX_UNIT_SIZE);
 	if (!mbox_base) {
-		pr_warn("carfield_mbox_hw: ioremap mailbox region failed\n");
+		pr_warn("alsaqr_mbox_hw: ioremap mailbox region failed\n");
 		return 0;
 	}
 
-	ret = request_irq(mbox_irq, carfield_mbox_hw_irq, 0,
-			   "carfield-mbox-hw", NULL);
+	ret = request_irq(mbox_irq, alsaqr_mbox_hw_irq, 0,
+			   "alsaqr-mbox-hw", NULL);
 	if (ret) {
-		pr_warn("carfield_mbox_hw: request_irq(%d) failed: %d\n",
+		pr_warn("alsaqr_mbox_hw: request_irq(%d) failed: %d\n",
 			mbox_irq, ret);
 		iounmap(mbox_base);
 		mbox_base = NULL;
@@ -240,12 +240,12 @@ int carfield_mbox_hw_start(void)
 	}
 
 	mbox_irq_requested = true;
-	pr_info("carfield_mbox_hw: real mailbox backend started (base=0x%lx, irq=%d)\n",
-		(unsigned long)CARFIELD_MBOX_BASE_ADDR, mbox_irq);
+	pr_info("alsaqr_mbox_hw: real mailbox backend started (base=0x%lx, irq=%d)\n",
+		(unsigned long)ALSAQR_MBOX_BASE_ADDR, mbox_irq);
 	return 0;
 }
 
-void carfield_mbox_hw_stop(void)
+void alsaqr_mbox_hw_stop(void)
 {
 	if (mbox_irq_requested) {
 		free_irq(mbox_irq, NULL);
@@ -258,7 +258,7 @@ void carfield_mbox_hw_stop(void)
 	}
 
 	if (mbox_driver_registered) {
-		platform_driver_unregister(&carfield_mbox_platform_driver);
+		platform_driver_unregister(&alsaqr_mbox_platform_driver);
 		mbox_driver_registered = false;
 	}
 }

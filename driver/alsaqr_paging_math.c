@@ -1,4 +1,4 @@
-#include "carfield_paging.h"
+#include "alsaqr_paging.h"
 
 /*
  * Page-layout math for a [data_addr, data_addr + data_size) range.
@@ -13,10 +13,10 @@
  * (see tests/paging_math_test.c) -- no need for a real kernel build to
  * verify this logic.
  */
-void carfield_paging_compute_info(unsigned long data_addr,
+void alsaqr_paging_compute_info(unsigned long data_addr,
 				   unsigned long data_size,
 				   unsigned long page_size,
-				   struct carfield_page_info *info)
+				   struct alsaqr_page_info *info)
 {
 	unsigned long fpo, fps, lps, nop;
 	unsigned long data_addr_end, first_page_id, last_page_id;

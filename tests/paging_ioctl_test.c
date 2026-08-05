@@ -1,9 +1,9 @@
 /*
- * Userspace test for CARFIELD_PAGING_TEST (driver/carfield_paging.c).
+ * Userspace test for ALSAQR_PAGING_TEST (driver/alsaqr_paging.c).
  *
  * Unlike paging_math_test.c (pure arithmetic, no kernel needed), this
  * exercises the real pin_user_pages_fast() -> header/map page -> release
- * chain against /dev/carfield on a real kernel. Requires the carfield_mod
+ * chain against /dev/alsaqr on a real kernel. Requires the alsaqr_mod
  * module to be loaded (no FPGA/mailbox involved -- the ioctl stops right
  * after building the header, before anything would be sent to hardware).
  */
@@ -14,7 +14,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include "../driver/carfield_paging.h"
+#include "../driver/alsaqr_paging.h"
 
 #define TEST_PAGE_SIZE 4096
 
@@ -23,7 +23,7 @@ int main(void)
 	int fd;
 	void *buf;
 	unsigned long fpo, expect_nop;
-	struct carfield_paging_test_req req;
+	struct alsaqr_paging_test_req req;
 	int rc = 0;
 
 	/* 4 pages of anonymous memory, touched so every page is resident
@@ -42,9 +42,9 @@ int main(void)
 	fpo = 0x123;
 	expect_nop = 3;
 
-	fd = open("/dev/carfield", O_RDWR);
+	fd = open("/dev/alsaqr", O_RDWR);
 	if (fd < 0) {
-		perror("open /dev/carfield");
+		perror("open /dev/alsaqr");
 		munmap(buf, 4 * TEST_PAGE_SIZE);
 		return 1;
 	}
@@ -53,8 +53,8 @@ int main(void)
 	req.user_addr = (__u64)(unsigned long)buf + fpo;
 	req.user_size = 2 * TEST_PAGE_SIZE + 100;
 
-	if (ioctl(fd, CARFIELD_PAGING_TEST, &req) < 0) {
-		perror("ioctl CARFIELD_PAGING_TEST");
+	if (ioctl(fd, ALSAQR_PAGING_TEST, &req) < 0) {
+		perror("ioctl ALSAQR_PAGING_TEST");
 		close(fd);
 		munmap(buf, 4 * TEST_PAGE_SIZE);
 		return 1;

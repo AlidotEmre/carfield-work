@@ -1,4 +1,4 @@
-#include "carfield_paging.h"
+#include "alsaqr_paging.h"
 
 #include <linux/mm.h>		/* pin_user_pages_fast / unpin_user_pages */
 #include <linux/highmem.h>	/* kmap / kunmap */
@@ -8,7 +8,7 @@
 #include <linux/string.h>	/* memset */
 #include <linux/printk.h>	/* pr_err */
 
-/* carfield_paging_compute_info() lives in carfield_paging_math.c */
+/* alsaqr_paging_compute_info() lives in alsaqr_paging_math.c */
 
 #ifdef __KERNEL__
 
@@ -21,7 +21,7 @@
  * pages for DMA/hardware access (rather than just reading them) to use,
  * and it pairs with unpin_user_pages() below.
  */
-static struct page **carfield_paging_get_pages(struct carfield_page_info *info,
+static struct page **alsaqr_paging_get_pages(struct alsaqr_page_info *info,
 						 bool write)
 {
 	struct page **pages;
@@ -43,14 +43,14 @@ static struct page **carfield_paging_get_pages(struct carfield_page_info *info,
 	return pages;
 }
 
-static void carfield_paging_put_pages(struct page **pages, unsigned long nop)
+static void alsaqr_paging_put_pages(struct page **pages, unsigned long nop)
 {
 	unpin_user_pages(pages, nop);
 	kfree(pages);
 }
 
-int carfield_paging_build(unsigned long user_addr, unsigned long user_size,
-			   bool write, struct carfield_paging_handle *out)
+int alsaqr_paging_build(unsigned long user_addr, unsigned long user_size,
+			   bool write, struct alsaqr_paging_handle *out)
 {
 	unsigned long i;
 	int ret;
@@ -65,12 +65,12 @@ int carfield_paging_build(unsigned long user_addr, unsigned long user_size,
 	if (!user_size || user_addr + user_size < user_addr)
 		return -EINVAL;
 
-	carfield_paging_compute_info(user_addr, user_size, PAGE_SIZE,
+	alsaqr_paging_compute_info(user_addr, user_size, PAGE_SIZE,
 				      &out->info);
 
 	/*
 	 * out->map is a single page of u32 entries (see the map_page comment
-	 * in carfield_paging.h) -- there is no chained/multi-page map yet.
+	 * in alsaqr_paging.h) -- there is no chained/multi-page map yet.
 	 * A transfer whose nop exceeds that capacity would write past the
 	 * mapped page into whatever kernel memory follows it. Reject rather
 	 * than corrupt.
@@ -79,7 +79,7 @@ int carfield_paging_build(unsigned long user_addr, unsigned long user_size,
 	 * too large for the current single-page map, distinct from the
 	 * malformed-request case above (zero size / address overflow).
 	 * Callers (e.g. the Python interface layer's abi.py) map the two
-	 * separately -- CarfieldSizeError vs CarfieldBadRequest.
+	 * separately -- AlsaqrSizeError vs AlsaqrBadRequest.
 	 */
 	if (out->info.nop > PAGE_SIZE / sizeof(u32))
 		return -E2BIG;
@@ -110,7 +110,7 @@ int carfield_paging_build(unsigned long user_addr, unsigned long user_size,
 	 * silently truncate such an address instead of failing; checked
 	 * there instead of assumed safe.
 	 */
-	out->data_pages = carfield_paging_get_pages(&out->info, write);
+	out->data_pages = alsaqr_paging_get_pages(&out->info, write);
 	if (!out->data_pages)
 		goto err_free_map;
 
@@ -121,7 +121,7 @@ int carfield_paging_build(unsigned long user_addr, unsigned long user_size,
 		phys_addr_t phys = PFN_PHYS(page_to_pfn(out->data_pages[i]));
 
 		if (phys > 0xFFFFFFFFULL) {
-			pr_err("carfield: data page %lu at phys 0x%llx is above the 32-bit mailbox range\n",
+			pr_err("alsaqr: data page %lu at phys 0x%llx is above the 32-bit mailbox range\n",
 			       i, (unsigned long long)phys);
 			ret = -ERANGE;
 			goto err_unmap;
@@ -131,14 +131,14 @@ int carfield_paging_build(unsigned long user_addr, unsigned long user_size,
 
 	out->header_phys = (u32)PFN_PHYS(page_to_pfn(out->header_page));
 
-	out->header->magic = CARFIELD_PAGING_MAGIC;
+	out->header->magic = ALSAQR_PAGING_MAGIC;
 	out->header->dsz   = out->info.data_size;
 	out->header->nop   = out->info.nop;
 	out->header->fpo   = out->info.fpo;
 	out->header->fps   = out->info.fps;
 	out->header->lps   = out->info.lps;
 	out->header->map   = (u32)PFN_PHYS(page_to_pfn(out->map_page));
-	out->header->version     = CARFIELD_PAGING_HEADER_VERSION;
+	out->header->version     = ALSAQR_PAGING_HEADER_VERSION;
 	out->header->reserved[0] = 0;
 	out->header->reserved[1] = 0;
 
@@ -149,7 +149,7 @@ err_unmap:
 	kunmap(out->header_page);
 	out->header = NULL;
 	out->map = NULL;
-	carfield_paging_put_pages(out->data_pages, out->info.nop);
+	alsaqr_paging_put_pages(out->data_pages, out->info.nop);
 	out->data_pages = NULL;
 err_free_map:
 	__free_page(out->map_page);
@@ -160,10 +160,10 @@ err_free_header:
 	return ret;
 }
 
-void carfield_paging_release(struct carfield_paging_handle *h)
+void alsaqr_paging_release(struct alsaqr_paging_handle *h)
 {
 	if (h->data_pages)
-		carfield_paging_put_pages(h->data_pages, h->info.nop);
+		alsaqr_paging_put_pages(h->data_pages, h->info.nop);
 
 	if (h->header)
 		kunmap(h->header_page);

@@ -1,15 +1,15 @@
 /*
- * Userspace test for carfield_paging_compute_info() (driver/carfield_paging_math.c).
+ * Userspace test for alsaqr_paging_compute_info() (driver/alsaqr_paging_math.c).
  *
  * This validates only the page-layout arithmetic (nop/fpo/fps/lps) -- it
  * does not pin real pages or touch physical addresses, since that needs
  * a real kernel build (no WSL2 kernel-headers package available right
- * now; see driver/carfield_paging.c for the real pin/build/release code).
+ * now; see driver/alsaqr_paging.c for the real pin/build/release code).
  * Plain gcc, no FPGA, no kernel module required.
  */
 
 #include <stdio.h>
-#include "../driver/carfield_paging.h"
+#include "../driver/alsaqr_paging.h"
 
 static int failures;
 
@@ -18,9 +18,9 @@ static void check_case(const char *name, unsigned long addr,
 			unsigned long exp_nop, unsigned long exp_fpo,
 			unsigned long exp_fps, unsigned long exp_lps)
 {
-	struct carfield_page_info info;
+	struct alsaqr_page_info info;
 
-	carfield_paging_compute_info(addr, size, page_size, &info);
+	alsaqr_paging_compute_info(addr, size, page_size, &info);
 
 	printf("[%-28s] addr=0x%05lx size=%6lu -> nop=%lu fpo=%lu fps=%lu lps=%lu\n",
 	       name, addr, size, info.nop, info.fpo, info.fps, info.lps);
@@ -37,7 +37,7 @@ int main(void)
 {
 	unsigned long page_size = 4096;
 
-	printf("== Carfield paging math test (no kernel/FPGA needed) ==\n\n");
+	printf("== Alsaqr paging math test (no kernel/FPGA needed) ==\n\n");
 
 	/* Single page, page-aligned, fits entirely in one page */
 	check_case("aligned, fits in 1 page", 0x1000, 100, page_size,

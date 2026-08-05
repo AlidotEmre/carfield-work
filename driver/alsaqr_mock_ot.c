@@ -1,4 +1,4 @@
-#include "carfield_mock_ot.h"
+#include "alsaqr_mock_ot.h"
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -17,9 +17,9 @@
  * Mock OpenTitan consumer -- kthread-based implementation of MOCK_OT_SPEC.md.
  *
  * Clean-room discipline (spec §2.1/§2.2): everything below is derived from
- * the header/map layout in carfield_paging.h and the validation rules in
- * MOCK_OT_SPEC.md §5. It never touches struct carfield_paging_handle or any
- * of carfield_paging.c's in-kernel pointers -- it re-resolves every page
+ * the header/map layout in alsaqr_paging.h and the validation rules in
+ * MOCK_OT_SPEC.md §5. It never touches struct alsaqr_paging_handle or any
+ * of alsaqr_paging.c's in-kernel pointers -- it re-resolves every page
  * from the raw physical addresses, the same way a real, separate piece of
  * silicon would have to.
  */
@@ -49,7 +49,7 @@ MODULE_PARM_DESC(mock_bad_xform, "Mock OT: XOR with 0xFF instead of 0x5A (proves
 /*
  * Not in MOCK_OT_SPEC.md §6 itself, but directly enables §7's "one §5
  * rejection case" requirement: every §5 rule is something the real
- * producer (carfield_paging_build) already refuses to construct in the
+ * producer (alsaqr_paging_build) already refuses to construct in the
  * first place (bad magic/size/nop/geometry/map never happen if the header
  * came from our own paging chain), so there is no way to reach any of the
  * 8 rejections through the normal ioctl path. This corrupts the magic word
@@ -60,17 +60,17 @@ static int mock_corrupt_magic;
 module_param(mock_corrupt_magic, int, 0644);
 MODULE_PARM_DESC(mock_corrupt_magic, "Test-only: corrupt the header magic before validating, to exercise ERR_MAGIC");
 
-#define CARFIELD_MOCK_OT_XOR_KEY	0x5A
-#define CARFIELD_MOCK_OT_XOR_KEY_BAD	0xFF
+#define ALSAQR_MOCK_OT_XOR_KEY	0x5A
+#define ALSAQR_MOCK_OT_XOR_KEY_BAD	0xFF
 
 /* ── Channel state (single in-flight request) ────────────────────────────
  *
  * No locking: this mirrors the same "single user/single piece of hardware"
- * assumption already accepted for CARFIELD_CLUSTER_RUN's cdev_data.wq_flag
- * in carfield.c -- concurrent callers were a known, consciously-deferred
+ * assumption already accepted for ALSAQR_CLUSTER_RUN's cdev_data.wq_flag
+ * in alsaqr.c -- concurrent callers were a known, consciously-deferred
  * limitation there, not something this mock introduces new.
  */
-struct carfield_mock_ot_channel {
+struct alsaqr_mock_ot_channel {
 	struct task_struct *thread;
 
 	wait_queue_head_t doorbell_wq;
@@ -84,15 +84,15 @@ struct carfield_mock_ot_channel {
 	u32 letter1_reply;
 };
 
-static struct carfield_mock_ot_channel mock_chan;
+static struct alsaqr_mock_ot_channel mock_chan;
 
 /* ── Backend seam (MOCK_OT_SPEC.md §2.4) ─────────────────────────────────── */
 
-void carfield_mock_ot_send(u32 header_phys, u32 cmd)
+void alsaqr_mock_ot_send(u32 header_phys, u32 cmd)
 {
 	/* Reset the completion flag before ringing the doorbell -- same
-	 * "clear before releasing" discipline as CARFIELD_CLUSTER_RUN's
-	 * wq_flag in carfield.c, so a reply that arrives between here and
+	 * "clear before releasing" discipline as ALSAQR_CLUSTER_RUN's
+	 * wq_flag in alsaqr.c, so a reply that arrives between here and
 	 * wait_completion() below isn't missed. */
 	mock_chan.completion_pending = false;
 	mock_chan.letter0_req = header_phys;
@@ -101,7 +101,7 @@ void carfield_mock_ot_send(u32 header_phys, u32 cmd)
 	wake_up_interruptible(&mock_chan.doorbell_wq);
 }
 
-int carfield_mock_ot_wait_completion(long timeout_ms)
+int alsaqr_mock_ot_wait_completion(long timeout_ms)
 {
 	long left = wait_event_interruptible_timeout(mock_chan.completion_wq,
 			mock_chan.completion_pending,
@@ -114,59 +114,59 @@ int carfield_mock_ot_wait_completion(long timeout_ms)
 	return 0;
 }
 
-void carfield_mock_ot_read_reply(u32 *letter0, u32 *letter1)
+void alsaqr_mock_ot_read_reply(u32 *letter0, u32 *letter1)
 {
 	*letter0 = mock_chan.letter0_reply;
 	*letter1 = mock_chan.letter1_reply;
 	mock_chan.completion_pending = false;
 }
 
-int carfield_mock_ot_status_to_errno(u32 status)
+int alsaqr_mock_ot_status_to_errno(u32 status)
 {
 	switch (status) {
-	case CARFIELD_MOCK_OT_OK:		return 0;
-	case CARFIELD_MOCK_OT_ERR_MAGIC:	return -EILSEQ;
-	case CARFIELD_MOCK_OT_ERR_SIZE:	return -EINVAL;
-	case CARFIELD_MOCK_OT_ERR_NOP:		return -E2BIG;
-	case CARFIELD_MOCK_OT_ERR_GEOMETRY:	return -EBADMSG;
-	case CARFIELD_MOCK_OT_ERR_MAP:		return -EFAULT;
-	case CARFIELD_MOCK_OT_ERR_MAP_ENTRY:	return -ENXIO;
+	case ALSAQR_MOCK_OT_OK:		return 0;
+	case ALSAQR_MOCK_OT_ERR_MAGIC:	return -EILSEQ;
+	case ALSAQR_MOCK_OT_ERR_SIZE:	return -EINVAL;
+	case ALSAQR_MOCK_OT_ERR_NOP:		return -E2BIG;
+	case ALSAQR_MOCK_OT_ERR_GEOMETRY:	return -EBADMSG;
+	case ALSAQR_MOCK_OT_ERR_MAP:		return -EFAULT;
+	case ALSAQR_MOCK_OT_ERR_MAP_ENTRY:	return -ENXIO;
 	default:				return -EIO; /* mock_force_err or unknown */
 	}
 }
 
-bool carfield_mock_ot_enabled(void)
+bool alsaqr_mock_ot_enabled(void)
 {
 	return mock_chan.thread != NULL;
 }
 
-bool carfield_mock_ot_requested(void)
+bool alsaqr_mock_ot_requested(void)
 {
 	return mock_ot != 0;
 }
 
 /* ── Validation (MOCK_OT_SPEC.md §5) ─────────────────────────────────────── */
 
-static u32 carfield_mock_ot_validate(u32 magic, u32 dsz, u32 nop, u32 fpo,
+static u32 alsaqr_mock_ot_validate(u32 magic, u32 dsz, u32 nop, u32 fpo,
 				       u32 fps, u32 lps, u32 map_phys)
 {
 	u64 expected_nop, expected_fps, expected_lps;
 
-	if (magic != CARFIELD_PAGING_MAGIC)
-		return CARFIELD_MOCK_OT_ERR_MAGIC;		/* rule 1 */
+	if (magic != ALSAQR_PAGING_MAGIC)
+		return ALSAQR_MOCK_OT_ERR_MAGIC;		/* rule 1 */
 
 	if (dsz == 0)
-		return CARFIELD_MOCK_OT_ERR_SIZE;		/* rule 2 */
+		return ALSAQR_MOCK_OT_ERR_SIZE;		/* rule 2 */
 
 	if (nop == 0 || nop > 1024)
-		return CARFIELD_MOCK_OT_ERR_NOP;		/* rule 3 */
+		return ALSAQR_MOCK_OT_ERR_NOP;		/* rule 3 */
 
 	if (fpo >= PAGE_SIZE)
-		return CARFIELD_MOCK_OT_ERR_GEOMETRY;		/* rule 8 */
+		return ALSAQR_MOCK_OT_ERR_GEOMETRY;		/* rule 8 */
 
 	expected_nop = ((u64)fpo + dsz + PAGE_SIZE - 1) / PAGE_SIZE;
 	if (expected_nop != nop)
-		return CARFIELD_MOCK_OT_ERR_GEOMETRY;		/* rule 4 */
+		return ALSAQR_MOCK_OT_ERR_GEOMETRY;		/* rule 4 */
 
 	if (nop == 1) {
 		expected_fps = dsz;
@@ -176,30 +176,30 @@ static u32 carfield_mock_ot_validate(u32 magic, u32 dsz, u32 nop, u32 fpo,
 		expected_lps = (u64)dsz - expected_fps - (u64)(nop - 2) * PAGE_SIZE;
 	}
 	if (fps != expected_fps || lps != expected_lps)
-		return CARFIELD_MOCK_OT_ERR_GEOMETRY;		/* rule 5 */
+		return ALSAQR_MOCK_OT_ERR_GEOMETRY;		/* rule 5 */
 
 	if (!map_phys || (map_phys & (PAGE_SIZE - 1)))
-		return CARFIELD_MOCK_OT_ERR_MAP;		/* rule 6 */
+		return ALSAQR_MOCK_OT_ERR_MAP;		/* rule 6 */
 
-	return CARFIELD_MOCK_OT_OK;
+	return ALSAQR_MOCK_OT_OK;
 }
 
 /* ── Independent header/map/data walk (MOCK_OT_SPEC.md §2.2, §3, §4) ────── */
 
-static u32 carfield_mock_ot_process(u32 header_phys)
+static u32 alsaqr_mock_ot_process(u32 header_phys)
 {
 	struct page *hpage, *mpage;
-	struct carfield_mbox_header *header;
+	struct alsaqr_mbox_header *header;
 	u32 *map;
 	u32 magic, dsz, nop, fpo, fps, lps, map_phys;
 	u32 version, reserved0, reserved1;
 	u32 status;
 	u32 i;
-	u8 xor_key = mock_bad_xform ? CARFIELD_MOCK_OT_XOR_KEY_BAD
-				    : CARFIELD_MOCK_OT_XOR_KEY;
+	u8 xor_key = mock_bad_xform ? ALSAQR_MOCK_OT_XOR_KEY_BAD
+				    : ALSAQR_MOCK_OT_XOR_KEY;
 
 	/* Independent walk starts here: header_phys is a raw phys addr off
-	 * the wire, not h->header from carfield_paging_build(). */
+	 * the wire, not h->header from alsaqr_paging_build(). */
 	hpage = pfn_to_page(PHYS_PFN(header_phys));
 	header = kmap_local_page(hpage);
 	magic	 = header->magic;
@@ -212,7 +212,7 @@ static u32 carfield_mock_ot_process(u32 header_phys)
 
 	/*
 	 * version/reserved live past the ratified §3 layout (see
-	 * carfield_paging.h). MOCK_OT_SPEC.md doesn't define a check for
+	 * alsaqr_paging.h). MOCK_OT_SPEC.md doesn't define a check for
 	 * them yet, so they're read (proving the mock's own struct
 	 * definition agrees byte-for-byte with the producer's) and
 	 * deliberately not validated -- a version check belongs here once
@@ -230,8 +230,8 @@ static u32 carfield_mock_ot_process(u32 header_phys)
 
 	kunmap_local(header);
 
-	status = carfield_mock_ot_validate(magic, dsz, nop, fpo, fps, lps, map_phys);
-	if (status != CARFIELD_MOCK_OT_OK)
+	status = alsaqr_mock_ot_validate(magic, dsz, nop, fpo, fps, lps, map_phys);
+	if (status != ALSAQR_MOCK_OT_OK)
 		return status;
 
 	mpage = pfn_to_page(PHYS_PFN(map_phys));
@@ -243,7 +243,7 @@ static u32 carfield_mock_ot_process(u32 header_phys)
 	for (i = 0; i < nop; i++) {
 		if (!map[i] || (map[i] & (PAGE_SIZE - 1))) {
 			kunmap_local(map);
-			return CARFIELD_MOCK_OT_ERR_MAP_ENTRY;
+			return ALSAQR_MOCK_OT_ERR_MAP_ENTRY;
 		}
 	}
 
@@ -271,12 +271,12 @@ static u32 carfield_mock_ot_process(u32 header_phys)
 	}
 
 	kunmap_local(map);
-	return CARFIELD_MOCK_OT_OK;
+	return ALSAQR_MOCK_OT_OK;
 }
 
 /* ── Service loop (MOCK_OT_SPEC.md §2.3) ─────────────────────────────────── */
 
-static int carfield_mock_ot_thread_fn(void *arg)
+static int alsaqr_mock_ot_thread_fn(void *arg)
 {
 	while (!kthread_should_stop()) {
 		u32 letter0, cmd, status;
@@ -295,25 +295,25 @@ static int carfield_mock_ot_thread_fn(void *arg)
 			msleep(mock_delay_ms);
 
 		if (mock_no_reply) {
-			pr_info("carfield_mock_ot: mock_no_reply=1, swallowing request (letter0=0x%x)\n",
+			pr_info("alsaqr_mock_ot: mock_no_reply=1, swallowing request (letter0=0x%x)\n",
 				letter0);
 			continue;	/* no completion signaled -> host times out */
 		}
 
 		if (mock_force_err) {
 			status = mock_force_err;
-		} else if (cmd == CARFIELD_OT_CMD_CLUSTER_BOOT) {
+		} else if (cmd == ALSAQR_OT_CMD_CLUSTER_BOOT) {
 			/*
 			 * CLUSTER_BOOT's letter0 is a raw L2 phys addr, not a
-			 * carfield_mbox_header -- there is no header/map to
+			 * alsaqr_mbox_header -- there is no header/map to
 			 * validate here. What OT actually does to boot the
 			 * cluster from it is out of scope (black box, see
 			 * project_alsaqr.md); the mock can only ack that the
 			 * transport delivered the request.
 			 */
-			status = CARFIELD_MOCK_OT_OK;
+			status = ALSAQR_MOCK_OT_OK;
 		} else {
-			status = carfield_mock_ot_process(letter0);
+			status = alsaqr_mock_ot_process(letter0);
 		}
 
 		mock_chan.letter0_reply = letter0;
@@ -327,7 +327,7 @@ static int carfield_mock_ot_thread_fn(void *arg)
 
 /* ── Lifecycle ────────────────────────────────────────────────────────────── */
 
-int carfield_mock_ot_start(void)
+int alsaqr_mock_ot_start(void)
 {
 	if (!mock_ot)
 		return 0; /* spec: no behavior change when mock_ot=0 */
@@ -335,21 +335,21 @@ int carfield_mock_ot_start(void)
 	init_waitqueue_head(&mock_chan.doorbell_wq);
 	init_waitqueue_head(&mock_chan.completion_wq);
 
-	mock_chan.thread = kthread_run(carfield_mock_ot_thread_fn, NULL,
-					"carfield_mock_ot");
+	mock_chan.thread = kthread_run(alsaqr_mock_ot_thread_fn, NULL,
+					"alsaqr_mock_ot");
 	if (IS_ERR(mock_chan.thread)) {
 		int ret = PTR_ERR(mock_chan.thread);
 
 		mock_chan.thread = NULL;
-		pr_err("carfield_mock_ot: kthread_run failed: %d\n", ret);
+		pr_err("alsaqr_mock_ot: kthread_run failed: %d\n", ret);
 		return ret;
 	}
 
-	pr_info("carfield_mock_ot: mock OpenTitan kthread started\n");
+	pr_info("alsaqr_mock_ot: mock OpenTitan kthread started\n");
 	return 0;
 }
 
-void carfield_mock_ot_stop(void)
+void alsaqr_mock_ot_stop(void)
 {
 	if (mock_chan.thread) {
 		kthread_stop(mock_chan.thread);

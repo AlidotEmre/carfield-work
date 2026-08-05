@@ -20,7 +20,7 @@
  *       hello.elf
  *
  * The Linux driver loads this binary to L2 (0x78000000) and notifies
- * OpenTitan to boot the cluster from it (CARFIELD_CLUSTER_RUN) -- the
+ * OpenTitan to boot the cluster from it (ALSAQR_CLUSTER_RUN) -- the
  * host can no longer boot the cluster directly (asserting BOOT_ENABLE/
  * FETCH_ENABLE itself); OpenTitan is the one that does so, and how is
  * out of scope/black box for the host driver (Daniele's 2026-07-30 code

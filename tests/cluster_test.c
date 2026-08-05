@@ -6,7 +6,7 @@
  * 2026-07-30 code review, OpenTitan is the only thing that can, and how
  * it does so is out of scope/black box here (see
  * memory/project_alsaqr.md). This test only exercises the host<->OT
- * notification (CARFIELD_CLUSTER_RUN), same as CARFIELD_OT_XFORM's
+ * notification (ALSAQR_CLUSTER_RUN), same as ALSAQR_OT_XFORM's
  * seam. Whether OT's reply also means "cluster finished running", or
  * only "OT accepted the boot request", is still an open question
  * (docs/QUESTIONS_FOR_TEAM.md) -- this test cannot currently tell the
@@ -29,7 +29,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include "../driver/carfield.h"
+#include "../driver/alsaqr.h"
 
 #define L2_SIZE  0x100000   /* 1 MB */
 #define L2_PHYS  0x78000000 /* physical base of L2_INTL_0 */
@@ -40,7 +40,7 @@ int main(int argc, char *argv[])
 	void *l2;
 	struct stat st;
 	void *bin_buf;
-	struct carfield_cluster_run req;
+	struct alsaqr_cluster_run req;
 	int rc = 1; /* default to failure; only cleared on confirmed PASS */
 
 	if (argc != 2) {
@@ -48,16 +48,16 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	/* Open Carfield device */
-	fd = open("/dev/carfield", O_RDWR | O_SYNC);
+	/* Open Alsaqr device */
+	fd = open("/dev/alsaqr", O_RDWR | O_SYNC);
 	if (fd < 0) {
-		perror("open /dev/carfield");
+		perror("open /dev/alsaqr");
 		return 1;
 	}
 
 	/* Map L2 interleaved bank 0 into user space */
 	l2 = mmap(NULL, L2_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
-		  fd, CARFIELD_MMAP_L2_INTL_0 * getpagesize());
+		  fd, ALSAQR_MMAP_L2_INTL_0 * getpagesize());
 	if (l2 == MAP_FAILED) {
 		perror("mmap L2 (requires FPGA hardware)");
 		close(fd);
@@ -100,8 +100,8 @@ int main(int argc, char *argv[])
 	req.boot_addr = L2_PHYS;
 	req.result    = 0;
 
-	if (ioctl(fd, CARFIELD_CLUSTER_RUN, &req) < 0) {
-		perror("ioctl CARFIELD_CLUSTER_RUN");
+	if (ioctl(fd, ALSAQR_CLUSTER_RUN, &req) < 0) {
+		perror("ioctl ALSAQR_CLUSTER_RUN");
 		goto out_unmap;
 	}
 

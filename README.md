@@ -12,7 +12,7 @@ Carfield SoC üzerinde encrypted TinyML inference çalıştıran Linux kernel dr
 Python (user space)
     │ ioctl
     ▼
-/dev/carfield  ← BU DRIVER (senin işin)
+/dev/alsaqr  ← BU DRIVER (senin işin, alsaqr-migration branch)
     ├── mmap ────────▶ L2 bellek (cluster binary'si doğrudan yazılır)
     └── Mailbox ─────▶ OpenTitan   (Luca + Francesco + Tina)
                           │  (black box — host'un ilgi alanı dışında)
@@ -96,15 +96,17 @@ carfield-work/
 ├── memory/                 ← Claude hafıza dosyaları (otomatik yüklenir)
 │   ├── MEMORY.md
 │   └── project_alsaqr.md
-├── driver/                 ← kernel driver kodu (Aşama 0'dan itibaren)
-│   ├── carfield.c/.h           ← /dev/carfield, IOCTL'ler, mmap, EOC IRQ
-│   ├── carfield_paging.c/.h    ← header/map page zinciri, pin/unpin (scattered veri transferi)
-│   ├── carfield_paging_math.c  ← sayfa-düzeni matematiği (kernel'siz derlenir)
-│   ├── carfield_mock_ot.c/.h   ← mock OpenTitan consumer (kthread) + host<->OT ioctl/cmd sözleşmesi
-│   │                              (CARFIELD_OT_XFORM, CARFIELD_OT_CMD_XFORM/CLUSTER_BOOT — hem mock
+├── driver/                 ← kernel driver kodu (Aşama 0'dan itibaren; alsaqr-migration
+│   │                              branch'inde AlSaqr'a yeniden adlandırıldı, bkz. CLAUDE.md)
+│   ├── alsaqr.c/.h             ← /dev/alsaqr, IOCTL'ler, mmap, EOC IRQ
+│   ├── alsaqr_paging.c/.h      ← header/map page zinciri, pin/unpin (scattered veri transferi)
+│   ├── alsaqr_paging_math.c    ← sayfa-düzeni matematiği (kernel'siz derlenir)
+│   ├── alsaqr_mock_ot.c/.h     ← mock OpenTitan consumer (kthread) + host<->OT ioctl/cmd sözleşmesi
+│   │                              (ALSAQR_OT_XFORM, ALSAQR_OT_CMD_XFORM/CLUSTER_BOOT — hem mock
 │   │                              hem gerçek donanım backend'i bunları paylaşır)
-│   └── carfield_mbox_hw.c/.h   ← GERÇEK mailbox donanım backend'i (real_mbox=1), aynı seam'in
-│                                  ikinci implementasyonu (register/IRQ, kthread değil)
+│   └── alsaqr_mbox_hw.c/.h     ← GERÇEK mailbox donanım backend'i (real_mbox=1), AlSaqr'ın gerçek
+│                                  device-tree'sinden (base 0x10404000, DT-probe'lu IRQ) register
+│                                  haritası, aynı seam'in ikinci implementasyonu (kthread değil)
 ├── pyiface/                ← Python arayüz katmanı (Aşama 4, bkz. docs/PYIFACE_SPEC.md)
 │   ├── abi.py                  ← TEK donanım aynası: ioctl no, ctypes struct'lar, errno mapping
 │   ├── device.py               ← CarfieldDevice: op başına metot (ping/cluster_run/paging_test)
@@ -125,23 +127,23 @@ carfield-work/
 cd ~/carfield-work/driver && make
 ```
 
-**Modül parametreleri (birbirini dışlar — ikisi de set edilirse `carfield_init()` ikisini de başlatmaz):**
+**Modül parametreleri (birbirini dışlar — ikisi de set edilirse `alsaqr_init()` ikisini de başlatmaz):**
 
 | Parametre | Ne yapar |
 |---|---|
 | `mock_ot=1` | Host↔OT mailbox seam'ini bir kthread mock'la test eder — FPGA gerekmez |
-| `real_mbox=1` | Aynı seam'i gerçek mailbox register'ları + IRQ (`CARFIELD_MBOX_IRQ=58`) üzerinden gerçek donanıma bağlar |
-| (ikisi de 0) | Sadece `CARFIELD_PING`/`CARFIELD_PAGING_TEST` kullanılabilir, host↔OT ioctl'leri (`CARFIELD_OT_XFORM`, `CARFIELD_CLUSTER_RUN`) `-ENODEV` döner |
+| `real_mbox=1` | Aynı seam'i gerçek mailbox register'ları üzerinden gerçek donanıma bağlar — AlSaqr'ın gerçek device-tree düğümüne (`compatible = "opentitan_mbox-0.0"`, base `0x10404000`) `platform_driver` ile eşleşip IRQ'yu oradan dinamik alır (artık hardcoded değil) |
+| (ikisi de 0) | Sadece `ALSAQR_PING`/`ALSAQR_PAGING_TEST` kullanılabilir, host↔OT ioctl'leri (`ALSAQR_OT_XFORM`, `ALSAQR_CLUSTER_RUN`) `-ENODEV` döner |
 
 ```bash
-sudo insmod carfield-mod.ko mock_ot=1     # ya da: real_mbox=1
+sudo insmod alsaqr-mod.ko mock_ot=1     # ya da: real_mbox=1
 ```
 
 **Cluster boot testi (`tests/cluster_test.c`):** host binary'i L2'ye
 `mmap`+`memcpy` ile doğrudan yazar (donanım gerektirir), sonra
-`CARFIELD_CLUSTER_RUN` ile OT'yi mailbox üzerinden bilgilendirir — cluster'ı
+`ALSAQR_CLUSTER_RUN` ile OT'yi mailbox üzerinden bilgilendirir — cluster'ı
 host değil OT boot eder (bkz. yukarıdaki mimari notu). `tests/` altındaki
-binary'ler `.gitignore`'da — `git pull` sonrası `carfield.h` değiştiyse
+binary'ler `.gitignore`'da — `git pull` sonrası `alsaqr.h` değiştiyse
 **mutlaka** `cd tests && make clean && make` (aksi halde sessiz `ENOTTY`).
 
 Açık sorular ve donanım-bağımlı yer tutucular için `docs/QUESTIONS_FOR_TEAM.md`'ye bakın.
@@ -155,12 +157,12 @@ Kontrat: `docs/PYIFACE_SPEC.md`. Sadece stdlib kullanır (`ctypes`/`mmap`/`fcntl
 **Çalıştırma:**
 ```bash
 cd ~/carfield-work/driver && make
-sudo insmod carfield-mod.ko mock_ot=1
+sudo insmod alsaqr-mod.ko mock_ot=1
 cd ~/carfield-work
 sudo python3 -m pytest tests/test_pyiface.py -v
 ```
 
-**GC tuzağı:** `CarfieldDevice.alloc()`'un döndürdüğü `mmap` nesnesi, `addr` kullanılırken (ör. bir ioctl çağrısı boyunca) referans olarak tutulmalı — bırakılırsa anonim mapping geri alınabilir ve `addr` geçersiz hâle gelir ya da başka bir şeye yeniden atanır. `CarfieldDevice` bu referansı çağıran adına tutmuyor (kasıtlı — aksi hâlde test suite'inin `gc.collect()` senaryolarının yakalamaya çalıştığı tam da bu tuzağı maskelemiş olurdu).
+**GC tuzağı:** `AlsaqrDevice.alloc()`'un döndürdüğü `mmap` nesnesi, `addr` kullanılırken (ör. bir ioctl çağrısı boyunca) referans olarak tutulmalı — bırakılırsa anonim mapping geri alınabilir ve `addr` geçersiz hâle gelir ya da başka bir şeye yeniden atanır. `CarfieldDevice` bu referansı çağıran adına tutmuyor (kasıtlı — aksi hâlde test suite'inin `gc.collect()` senaryolarının yakalamaya çalıştığı tam da bu tuzağı maskelemiş olurdu).
 
 **Gerçek donanım netleştiğinde ne değişir (docs/PYIFACE_SPEC.md §6):**
 

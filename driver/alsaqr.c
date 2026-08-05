@@ -10,13 +10,13 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/mm.h>
-#include "carfield.h"
-#include "carfield_paging.h"
-#include "carfield_mock_ot.h"
-#include "carfield_mbox_hw.h"
+#include "alsaqr.h"
+#include "alsaqr_paging.h"
+#include "alsaqr_mock_ot.h"
+#include "alsaqr_mbox_hw.h"
 
-#define DEVICE_NAME "carfield"
-#define CLASS_NAME  "carfield"
+#define DEVICE_NAME "alsaqr"
+#define CLASS_NAME  "alsaqr"
 
 /* ── Physical memory map (from car_params.h + car_memory_map.h) ─────────── */
 #define SOC_CTRL_PHYS        0x20010000UL
@@ -42,11 +42,11 @@
 
 /*
  * PULP cluster control register offsets (relative to soc_ctrl base), from
- * carfield/sw/include/regs/soc_ctrl.h. PULP_BOOT_ENABLE_OFF/FETCH_ENABLE_OFF
+ * alsaqr/sw/include/regs/soc_ctrl.h. PULP_BOOT_ENABLE_OFF/FETCH_ENABLE_OFF
  * and the int_cluster boot-address/return-value offsets used to be written
- * directly by CARFIELD_CLUSTER_RUN -- removed 2026-07-30 along with the
+ * directly by ALSAQR_CLUSTER_RUN -- removed 2026-07-30 along with the
  * soc_ctrl/int_cluster kernel ioremap that served them, now that booting the
- * cluster is OpenTitan's job, not the host's (see CARFIELD_CLUSTER_RUN's
+ * cluster is OpenTitan's job, not the host's (see ALSAQR_CLUSTER_RUN's
  * handler below and memory/project_alsaqr.md). PULP_BUSY_OFF/PULP_EOC_OFF
  * were already unused before that (superseded by the EOC IRQ below) and are
  * kept only as register-map documentation.
@@ -63,31 +63,31 @@
  * headers or confirmation from Daniele, same as the mailbox topology).
  *
  * 0 is not a valid IRQ number, so request_irq() below fails safely and
- * non-fatally (same tolerance carfield_mbox_hw.c's ioremap uses) until
+ * non-fatally (same tolerance alsaqr_mbox_hw.c's ioremap uses) until
  * this is filled in with the real PLIC source ID.
  */
-#define CARFIELD_EOC_IRQ           0
+#define ALSAQR_EOC_IRQ           0
 
 /* EOC wait timeout, replaces the old busy-poll iteration count */
-#define CARFIELD_EOC_TIMEOUT_MS    5000
+#define ALSAQR_EOC_TIMEOUT_MS    5000
 
-/* How long CARFIELD_OT_XFORM waits for the mock kthread's reply --
+/* How long ALSAQR_OT_XFORM waits for the mock kthread's reply --
  * comfortably longer than any reasonable mock_delay_ms test value, so a
  * real -ETIMEDOUT only happens for mock_no_reply (or a wedged mock). */
-#define CARFIELD_MOCK_OT_TIMEOUT_MS 2000
+#define ALSAQR_MOCK_OT_TIMEOUT_MS 2000
 
 /* ── Driver state ────────────────────────────────────────────────────────── */
-struct carfield_dev {
+struct alsaqr_dev {
 	struct cdev          cdev;
 	wait_queue_head_t    wq;
 	int                  wq_flag;
 };
 
 static dev_t          dev_num;
-static struct class  *carfield_class;
-static struct carfield_dev cdev_data;
+static struct class  *alsaqr_class;
+static struct alsaqr_dev cdev_data;
 
-/* set once request_irq(CARFIELD_EOC_IRQ, ...) succeeds, so carfield_exit()
+/* set once request_irq(ALSAQR_EOC_IRQ, ...) succeeds, so alsaqr_exit()
  * knows whether there is anything to free_irq() */
 static bool eoc_irq_requested;
 
@@ -99,26 +99,26 @@ struct mmap_region {
 };
 
 static const struct mmap_region mmap_table[] = {
-	{ CARFIELD_MMAP_SOC_CTRL,      SOC_CTRL_PHYS,      SOC_CTRL_SIZE      },
-	{ CARFIELD_MMAP_L2_INTL_0,     L2_INTL_0_PHYS,     L2_INTL_0_SIZE     },
-	{ CARFIELD_MMAP_L2_CONT_0,     L2_CONT_0_PHYS,     L2_CONT_0_SIZE     },
-	{ CARFIELD_MMAP_L2_INTL_1,     L2_INTL_1_PHYS,     L2_INTL_1_SIZE     },
-	{ CARFIELD_MMAP_L2_CONT_1,     L2_CONT_1_PHYS,     L2_CONT_1_SIZE     },
-	{ CARFIELD_MMAP_SAFETY_ISLAND,  SAFETY_ISLAND_PHYS, SAFETY_ISLAND_SIZE },
-	{ CARFIELD_MMAP_INT_CLUSTER,    INT_CLUSTER_PHYS,   INT_CLUSTER_SIZE   },
-	{ CARFIELD_MMAP_SPATZ_CLUSTER,  SPATZ_CLUSTER_PHYS, SPATZ_CLUSTER_SIZE },
+	{ ALSAQR_MMAP_SOC_CTRL,      SOC_CTRL_PHYS,      SOC_CTRL_SIZE      },
+	{ ALSAQR_MMAP_L2_INTL_0,     L2_INTL_0_PHYS,     L2_INTL_0_SIZE     },
+	{ ALSAQR_MMAP_L2_CONT_0,     L2_CONT_0_PHYS,     L2_CONT_0_SIZE     },
+	{ ALSAQR_MMAP_L2_INTL_1,     L2_INTL_1_PHYS,     L2_INTL_1_SIZE     },
+	{ ALSAQR_MMAP_L2_CONT_1,     L2_CONT_1_PHYS,     L2_CONT_1_SIZE     },
+	{ ALSAQR_MMAP_SAFETY_ISLAND,  SAFETY_ISLAND_PHYS, SAFETY_ISLAND_SIZE },
+	{ ALSAQR_MMAP_INT_CLUSTER,    INT_CLUSTER_PHYS,   INT_CLUSTER_SIZE   },
+	{ ALSAQR_MMAP_SPATZ_CLUSTER,  SPATZ_CLUSTER_PHYS, SPATZ_CLUSTER_SIZE },
 };
 
 /* ── File operations ─────────────────────────────────────────────────────── */
 
-static int carfield_open(struct inode *inode, struct file *file)
+static int alsaqr_open(struct inode *inode, struct file *file)
 {
 	file->private_data = container_of(inode->i_cdev,
-					  struct carfield_dev, cdev);
+					  struct alsaqr_dev, cdev);
 	return 0;
 }
 
-static int carfield_release(struct inode *inode, struct file *file)
+static int alsaqr_release(struct inode *inode, struct file *file)
 {
 	file->private_data = NULL;
 	return 0;
@@ -129,7 +129,7 @@ static int carfield_release(struct inode *inode, struct file *file)
  * User space selects the region via the page offset (vm_pgoff).
  * Matches car_linux_mmap.h from the Carfield repo.
  */
-static int carfield_mmap(struct file *file, struct vm_area_struct *vma)
+static int alsaqr_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	size_t req_size = vma->vm_end - vma->vm_start;
 	phys_addr_t phys = 0;
@@ -154,12 +154,12 @@ static int carfield_mmap(struct file *file, struct vm_area_struct *vma)
 
 /*
  * EOC interrupt handler: PULP cluster signals end-of-computation, wakes up
- * whoever is blocked in the CARFIELD_CLUSTER_RUN ioctl's wait_event below.
+ * whoever is blocked in the ALSAQR_CLUSTER_RUN ioctl's wait_event below.
  * Replaces the old busy-poll of PULP_EOC_OFF.
  */
-static irqreturn_t carfield_eoc_isr(int irq, void *dev_id)
+static irqreturn_t alsaqr_eoc_isr(int irq, void *dev_id)
 {
-	struct carfield_dev *cdev = dev_id;
+	struct alsaqr_dev *cdev = dev_id;
 
 	cdev->wq_flag = 1;
 	wake_up_interruptible(&cdev->wq);
@@ -167,21 +167,21 @@ static irqreturn_t carfield_eoc_isr(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static long carfield_ioctl(struct file *file, unsigned int cmd,
+static long alsaqr_ioctl(struct file *file, unsigned int cmd,
 			   unsigned long arg)
 {
-	if (_IOC_TYPE(cmd) != CARFIELD_MAGIC)
+	if (_IOC_TYPE(cmd) != ALSAQR_MAGIC)
 		return -ENOTTY;
 
 	switch (cmd) {
 
 	/* ── Phase 0: ping ────────────────────────────────────────────── */
-	case CARFIELD_PING: {
-		struct carfield_ping ping;
+	case ALSAQR_PING: {
+		struct alsaqr_ping ping;
 
 		if (copy_from_user(&ping, (void __user *)arg, sizeof(ping)))
 			return -EFAULT;
-		pr_info("carfield: ping value=%u\n", ping.value);
+		pr_info("alsaqr: ping value=%u\n", ping.value);
 		ping.echo = ping.value;
 		if (copy_to_user((void __user *)arg, &ping, sizeof(ping)))
 			return -EFAULT;
@@ -196,7 +196,7 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 	 * boots it, and how it does so is out of scope/black box here (see
 	 * memory/project_alsaqr.md). This case now only does the host<->OT
 	 * notification, reusing the exact same seam as
-	 * CARFIELD_OT_XFORM below, just with CARFIELD_OT_CMD_CLUSTER_BOOT
+	 * ALSAQR_OT_XFORM below, just with ALSAQR_OT_CMD_CLUSTER_BOOT
 	 * and no paging chain (boot_addr is already a raw L2
 	 * physical address, not a userspace-pinned buffer needing
 	 * page_to_phys translation).
@@ -204,42 +204,42 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 	 * OPEN QUESTION (docs/QUESTIONS_FOR_TEAM.md): is this mailbox
 	 * completion (mbox7, OT -> host) the same signal as "cluster
 	 * finished running", or only "OT accepted the boot request"? The
-	 * pre-existing carfield_eoc_isr/CARFIELD_EOC_IRQ hardware-IRQ path
+	 * pre-existing alsaqr_eoc_isr/ALSAQR_EOC_IRQ hardware-IRQ path
 	 * (cluster's own eoc_o signal, independent of OT) is left untouched
 	 * below -- it is no longer waited on here, but it isn't known yet
 	 * whether it's superseded by this mailbox reply or still needed as
 	 * a separate completion signal.
 	 */
-	case CARFIELD_CLUSTER_RUN: {
-		struct carfield_cluster_run req;
+	case ALSAQR_CLUSTER_RUN: {
+		struct alsaqr_cluster_run req;
 		u32 letter0, letter1;
-		bool use_hw = carfield_mbox_hw_enabled();
+		bool use_hw = alsaqr_mbox_hw_enabled();
 		int ret;
 
-		if (!use_hw && !carfield_mock_ot_enabled())
+		if (!use_hw && !alsaqr_mock_ot_enabled())
 			return -ENODEV;
 
 		if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
 			return -EFAULT;
 
 		if (use_hw)
-			carfield_mbox_hw_send(req.boot_addr, CARFIELD_OT_CMD_CLUSTER_BOOT);
+			alsaqr_mbox_hw_send(req.boot_addr, ALSAQR_OT_CMD_CLUSTER_BOOT);
 		else
-			carfield_mock_ot_send(req.boot_addr, CARFIELD_OT_CMD_CLUSTER_BOOT);
+			alsaqr_mock_ot_send(req.boot_addr, ALSAQR_OT_CMD_CLUSTER_BOOT);
 
-		ret = use_hw ? carfield_mbox_hw_wait_completion(CARFIELD_EOC_TIMEOUT_MS)
-			     : carfield_mock_ot_wait_completion(CARFIELD_EOC_TIMEOUT_MS);
+		ret = use_hw ? alsaqr_mbox_hw_wait_completion(ALSAQR_EOC_TIMEOUT_MS)
+			     : alsaqr_mock_ot_wait_completion(ALSAQR_EOC_TIMEOUT_MS);
 		if (ret) {
-			req.result = CARFIELD_OT_STATUS_NONE;
+			req.result = ALSAQR_OT_STATUS_NONE;
 			if (copy_to_user((void __user *)arg, &req, sizeof(req)))
 				return -EFAULT;
 			return ret;
 		}
 
 		if (use_hw)
-			carfield_mbox_hw_read_reply(&letter0, &letter1);
+			alsaqr_mbox_hw_read_reply(&letter0, &letter1);
 		else
-			carfield_mock_ot_read_reply(&letter0, &letter1);
+			alsaqr_mock_ot_read_reply(&letter0, &letter1);
 		(void)letter0; /* echoed boot_addr, nothing to cross-check it
 				* against here */
 
@@ -250,19 +250,19 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 		if (use_hw)
 			return 0; /* real OT status semantics unknown, see XFORM's
 				   * identical caveat above */
-		return carfield_mock_ot_status_to_errno(letter1);
+		return alsaqr_mock_ot_status_to_errno(letter1);
 	}
 
 	/* ── Paging chain test: pin/build/release, no mailbox/FPGA ─────── */
-	case CARFIELD_PAGING_TEST: {
-		struct carfield_paging_test_req req;
-		struct carfield_paging_handle h;
+	case ALSAQR_PAGING_TEST: {
+		struct alsaqr_paging_test_req req;
+		struct alsaqr_paging_handle h;
 		int ret;
 
 		if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
 			return -EFAULT;
 
-		ret = carfield_paging_build(req.user_addr, req.user_size,
+		ret = alsaqr_paging_build(req.user_addr, req.user_size,
 					     true, &h);
 		if (ret)
 			return ret;
@@ -276,7 +276,7 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 		req.first_page_phys = h.map[0];
 		req.last_page_phys  = h.map[h.info.nop - 1];
 
-		carfield_paging_release(&h);
+		alsaqr_paging_release(&h);
 
 		if (copy_to_user((void __user *)arg, &req, sizeof(req)))
 			return -EFAULT;
@@ -286,64 +286,64 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 	/* ── OpenTitan consumer, mock OR real hardware (MOCK_OT_SPEC.md) ──
 	 *
 	 * Same ioctl/struct for both backends -- mock_ot=1 and real_mbox=1
-	 * are mutually exclusive (enforced in carfield_init()), so at most
-	 * one of carfield_mock_ot_enabled()/carfield_mbox_hw_enabled() is
+	 * are mutually exclusive (enforced in alsaqr_init()), so at most
+	 * one of alsaqr_mock_ot_enabled()/alsaqr_mbox_hw_enabled() is
 	 * ever true. The flow (build -> send -> wait -> read -> release) is
 	 * unchanged from the mock-only version; only which three functions
 	 * it calls differs.
 	 *
-	 * Renamed from CARFIELD_MOCK_OT_XFORM (2026-07-31): the old name
+	 * Renamed from ALSAQR_MOCK_OT_XFORM (2026-07-31): the old name
 	 * baked "mock" into a struct/ioctl that was already carrying real
 	 * hardware traffic whenever real_mbox=1 -- see
 	 * memory/project_alsaqr.md for the rename. The mock kthread's own
-	 * implementation (carfield_mock_ot.c: send/wait_completion/
-	 * read_reply/status_to_errno, the CARFIELD_MOCK_OT_ERR_* status
+	 * implementation (alsaqr_mock_ot.c: send/wait_completion/
+	 * read_reply/status_to_errno, the ALSAQR_MOCK_OT_ERR_* status
 	 * codes, the mock_* module params) correctly keeps "mock" in its
 	 * name -- only the shared ioctl-facing symbols moved.
 	 */
-	case CARFIELD_OT_XFORM: {
-		struct carfield_ot_xform_req req;
-		struct carfield_paging_handle h;
+	case ALSAQR_OT_XFORM: {
+		struct alsaqr_ot_xform_req req;
+		struct alsaqr_paging_handle h;
 		u32 letter0, letter1;
-		bool use_hw = carfield_mbox_hw_enabled();
+		bool use_hw = alsaqr_mbox_hw_enabled();
 		int ret;
 
-		if (!use_hw && !carfield_mock_ot_enabled())
+		if (!use_hw && !alsaqr_mock_ot_enabled())
 			return -ENODEV;
 
 		if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
 			return -EFAULT;
 
-		ret = carfield_paging_build(req.user_addr, req.user_size,
+		ret = alsaqr_paging_build(req.user_addr, req.user_size,
 					     true, &h);
 		if (ret)
 			return ret;
 
 		if (use_hw)
-			carfield_mbox_hw_send(h.header_phys, CARFIELD_OT_CMD_XFORM);
+			alsaqr_mbox_hw_send(h.header_phys, ALSAQR_OT_CMD_XFORM);
 		else
-			carfield_mock_ot_send(h.header_phys, CARFIELD_OT_CMD_XFORM);
+			alsaqr_mock_ot_send(h.header_phys, ALSAQR_OT_CMD_XFORM);
 
-		ret = use_hw ? carfield_mbox_hw_wait_completion(CARFIELD_MOCK_OT_TIMEOUT_MS)
-			     : carfield_mock_ot_wait_completion(CARFIELD_MOCK_OT_TIMEOUT_MS);
+		ret = use_hw ? alsaqr_mbox_hw_wait_completion(ALSAQR_MOCK_OT_TIMEOUT_MS)
+			     : alsaqr_mock_ot_wait_completion(ALSAQR_MOCK_OT_TIMEOUT_MS);
 		if (ret) {
 			/* mock_no_reply / real timeout, or a signal -- release
 			 * pages either way so this never leaks, then report
 			 * the failure. */
-			carfield_paging_release(&h);
-			req.ot_status = CARFIELD_OT_STATUS_NONE;
+			alsaqr_paging_release(&h);
+			req.ot_status = ALSAQR_OT_STATUS_NONE;
 			if (copy_to_user((void __user *)arg, &req, sizeof(req)))
 				return -EFAULT;
 			return ret;
 		}
 
 		if (use_hw)
-			carfield_mbox_hw_read_reply(&letter0, &letter1);
+			alsaqr_mbox_hw_read_reply(&letter0, &letter1);
 		else
-			carfield_mock_ot_read_reply(&letter0, &letter1);
+			alsaqr_mock_ot_read_reply(&letter0, &letter1);
 		(void)letter0; /* echoed header_phys, nothing to cross-check
 				* it against here -- h is about to be released */
-		carfield_paging_release(&h);
+		alsaqr_paging_release(&h);
 
 		req.ot_status = letter1;
 		if (copy_to_user((void __user *)arg, &req, sizeof(req)))
@@ -356,7 +356,7 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 			 * table is a convention this driver's own mock
 			 * invented for testing, not something confirmed
 			 * against real firmware. Running a real status
-			 * through carfield_mock_ot_status_to_errno() would
+			 * through alsaqr_mock_ot_status_to_errno() would
 			 * silently mislabel it as one of the mock's own
 			 * meanings. Report success-of-transport (a reply
 			 * arrived) and hand the raw value to userspace via
@@ -365,7 +365,7 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 			 */
 			return 0;
 		}
-		return carfield_mock_ot_status_to_errno(letter1);
+		return alsaqr_mock_ot_status_to_errno(letter1);
 	}
 
 	default:
@@ -375,42 +375,42 @@ static long carfield_ioctl(struct file *file, unsigned int cmd,
 	return 0;
 }
 
-static const struct file_operations carfield_fops = {
+static const struct file_operations alsaqr_fops = {
 	.owner          = THIS_MODULE,
-	.open           = carfield_open,
-	.release        = carfield_release,
-	.unlocked_ioctl = carfield_ioctl,
-	.mmap           = carfield_mmap,
+	.open           = alsaqr_open,
+	.release        = alsaqr_release,
+	.unlocked_ioctl = alsaqr_ioctl,
+	.mmap           = alsaqr_mmap,
 };
 
 /* ── Module init / exit ──────────────────────────────────────────────────── */
 
-static int __init carfield_init(void)
+static int __init alsaqr_init(void)
 {
 	int ret;
 
 	ret = alloc_chrdev_region(&dev_num, 0, 1, DEVICE_NAME);
 	if (ret < 0) {
-		pr_err("carfield: alloc_chrdev_region failed: %d\n", ret);
+		pr_err("alsaqr: alloc_chrdev_region failed: %d\n", ret);
 		return ret;
 	}
 
-	carfield_class = class_create(THIS_MODULE, CLASS_NAME);
-	if (IS_ERR(carfield_class)) {
-		ret = PTR_ERR(carfield_class);
+	alsaqr_class = class_create(THIS_MODULE, CLASS_NAME);
+	if (IS_ERR(alsaqr_class)) {
+		ret = PTR_ERR(alsaqr_class);
 		goto err_chrdev;
 	}
 
-	cdev_init(&cdev_data.cdev, &carfield_fops);
+	cdev_init(&cdev_data.cdev, &alsaqr_fops);
 	cdev_data.cdev.owner = THIS_MODULE;
 
 	ret = cdev_add(&cdev_data.cdev, dev_num, 1);
 	if (ret < 0) {
-		pr_err("carfield: cdev_add failed: %d\n", ret);
+		pr_err("alsaqr: cdev_add failed: %d\n", ret);
 		goto err_class;
 	}
 
-	if (IS_ERR(device_create(carfield_class, NULL, dev_num,
+	if (IS_ERR(device_create(alsaqr_class, NULL, dev_num,
 				 NULL, DEVICE_NAME))) {
 		ret = -ENOMEM;
 		goto err_cdev;
@@ -420,30 +420,30 @@ static int __init carfield_init(void)
 	cdev_data.wq_flag = 0;
 
 	/*
-	 * CARFIELD_EOC_IRQ is a placeholder (see its definition) until the
+	 * ALSAQR_EOC_IRQ is a placeholder (see its definition) until the
 	 * real PLIC source ID is known. 0 reliably fails as "invalid/busy"
 	 * on the x86_64 test rig this has been validated on, but IRQ 0 is
 	 * not universally invalid across architectures -- don't risk ever
 	 * actually requesting a real line 0 on whatever the target platform
 	 * turns out to be. Skip the call entirely instead.
 	 */
-	if (CARFIELD_EOC_IRQ > 0) {
-		ret = request_irq(CARFIELD_EOC_IRQ, carfield_eoc_isr, 0,
+	if (ALSAQR_EOC_IRQ > 0) {
+		ret = request_irq(ALSAQR_EOC_IRQ, alsaqr_eoc_isr, 0,
 				   DEVICE_NAME, &cdev_data);
 		if (ret)
-			pr_warn("carfield: request_irq(%d) failed: %d (EOC IRQ not wired up yet?)\n",
-				CARFIELD_EOC_IRQ, ret);
+			pr_warn("alsaqr: request_irq(%d) failed: %d (EOC IRQ not wired up yet?)\n",
+				ALSAQR_EOC_IRQ, ret);
 		else
 			eoc_irq_requested = true;
 	} else {
-		pr_warn("carfield: CARFIELD_EOC_IRQ not configured yet, skipping request_irq\n");
+		pr_warn("alsaqr: ALSAQR_EOC_IRQ not configured yet, skipping request_irq\n");
 	}
 
 	/*
 	 * mock_ot=1 and real_mbox=1 are two backends for the same channel
 	 * seam -- never start both. Their internal state is fully separate
 	 * (no data race between them), but the ioctl's use_hw selection
-	 * always prefers hardware when carfield_mbox_hw_enabled() is true,
+	 * always prefers hardware when alsaqr_mbox_hw_enabled() is true,
 	 * so if both were left running, mock_ot=1 would silently become dead
 	 * weight (kthread spun up, CPU/memory held, never actually
 	 * exercised) instead of testing what its caller asked for -- exactly
@@ -452,49 +452,49 @@ static int __init carfield_init(void)
 	 * (PING/CLUSTER_RUN/PAGING_TEST) usable rather than failing the
 	 * whole insmod.
 	 */
-	if (carfield_mock_ot_requested() && carfield_mbox_hw_requested()) {
-		pr_err("carfield: mock_ot=1 and real_mbox=1 both set -- mutually exclusive backends, starting neither\n");
+	if (alsaqr_mock_ot_requested() && alsaqr_mbox_hw_requested()) {
+		pr_err("alsaqr: mock_ot=1 and real_mbox=1 both set -- mutually exclusive backends, starting neither\n");
 	} else {
-		ret = carfield_mock_ot_start();
+		ret = alsaqr_mock_ot_start();
 		if (ret)
-			pr_warn("carfield: carfield_mock_ot_start failed: %d\n", ret);
+			pr_warn("alsaqr: alsaqr_mock_ot_start failed: %d\n", ret);
 
-		ret = carfield_mbox_hw_start();
+		ret = alsaqr_mbox_hw_start();
 		if (ret)
-			pr_warn("carfield: carfield_mbox_hw_start failed: %d\n", ret);
+			pr_warn("alsaqr: alsaqr_mbox_hw_start failed: %d\n", ret);
 	}
 
-	pr_info("carfield: /dev/%s ready (major=%d)\n",
+	pr_info("alsaqr: /dev/%s ready (major=%d)\n",
 		DEVICE_NAME, MAJOR(dev_num));
 	return 0;
 
 err_cdev:
 	cdev_del(&cdev_data.cdev);
 err_class:
-	class_destroy(carfield_class);
+	class_destroy(alsaqr_class);
 err_chrdev:
 	unregister_chrdev_region(dev_num, 1);
 	return ret;
 }
 
-static void __exit carfield_exit(void)
+static void __exit alsaqr_exit(void)
 {
-	carfield_mock_ot_stop();
-	carfield_mbox_hw_stop();
+	alsaqr_mock_ot_stop();
+	alsaqr_mbox_hw_stop();
 
 	if (eoc_irq_requested)
-		free_irq(CARFIELD_EOC_IRQ, &cdev_data);
+		free_irq(ALSAQR_EOC_IRQ, &cdev_data);
 
-	device_destroy(carfield_class, dev_num);
+	device_destroy(alsaqr_class, dev_num);
 	cdev_del(&cdev_data.cdev);
-	class_destroy(carfield_class);
+	class_destroy(alsaqr_class);
 	unregister_chrdev_region(dev_num, 1);
-	pr_info("carfield: removed\n");
+	pr_info("alsaqr: removed\n");
 }
 
-module_init(carfield_init);
-module_exit(carfield_exit);
+module_init(alsaqr_init);
+module_exit(alsaqr_exit);
 
 MODULE_AUTHOR("AlidotEmre");
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Carfield SoC kernel driver - Phase 3 (paging chain)");
+MODULE_DESCRIPTION("Alsaqr SoC kernel driver - Phase 3 (paging chain)");

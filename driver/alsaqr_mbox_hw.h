@@ -1,9 +1,9 @@
-#ifndef CARFIELD_MBOX_HW_H
-#define CARFIELD_MBOX_HW_H
+#ifndef ALSAQR_MBOX_HW_H
+#define ALSAQR_MBOX_HW_H
 
 /*
  * Real hardware backend for the mailbox channel seam defined by
- * carfield_mock_ot.h (MOCK_OT_SPEC.md §2.4): send() + wait_completion() +
+ * alsaqr_mock_ot.h (MOCK_OT_SPEC.md §2.4): send() + wait_completion() +
  * read_reply(). This file is the second implementation of that seam --
  * mailbox registers + IRQ instead of a kthread + shared struct.
  *
@@ -32,32 +32,32 @@
  * Deliberately no kernel headers above this line -- the register-offset
  * macros below are pure integer constants, so this half can be included
  * standalone by tests/mbox_reg_test.c with plain gcc, the same split
- * carfield_paging.h uses for carfield_paging_compute_info().
+ * alsaqr_paging.h uses for alsaqr_paging_compute_info().
  */
 
-#define CARFIELD_MBOX_BASE_ADDR	0x10404000UL
-#define CARFIELD_MBOX_UNIT_SIZE		0x28	/* full reg span per the DT node above */
+#define ALSAQR_MBOX_BASE_ADDR	0x10404000UL
+#define ALSAQR_MBOX_UNIT_SIZE		0x28	/* full reg span per the DT node above */
 
 /*
  * MBOX word area: where the outbound message (header_phys, cmd) is written
  * before ringing the doorbell. 0x14 bytes (5 words) available per the real
  * device (matches titanssl's own MBOX_SIZE); this driver's wire format only
  * uses the first two words (header_phys, cmd) -- see the note in
- * carfield_mbox_hw.c's send(). Words 2-4 are left unused/zero, not a
+ * alsaqr_mbox_hw.c's send(). Words 2-4 are left unused/zero, not a
  * titanssl-style 5-field ABI (magic/cmd+bitfield/session/pid) -- that ABI
  * belongs to titanssl's own firmware, not ours (we have no OT firmware yet,
  * see docs/QUESTIONS_FOR_TEAM.md).
  */
-#define CARFIELD_MBOX_REG_WORD0		0x00	/* header_phys */
-#define CARFIELD_MBOX_REG_WORD1		0x04	/* cmd */
-#define CARFIELD_MBOX_WORD_AREA_SIZE	0x14	/* 5 x u32, matches titanssl MBOX_SIZE */
+#define ALSAQR_MBOX_REG_WORD0		0x00	/* header_phys */
+#define ALSAQR_MBOX_REG_WORD1		0x04	/* cmd */
+#define ALSAQR_MBOX_WORD_AREA_SIZE	0x14	/* 5 x u32, matches titanssl MBOX_SIZE */
 
 /* 0x14-0x20 is reserved/unused per the DT node's 0x28-byte span -- not a
  * gap in this driver's own layout, just unused hardware address space
  * between the word area and the trigger registers below. */
 
-#define CARFIELD_MBOX_REG_DOORBELL	0x20	/* write-1 to ring (host -> OT) */
-#define CARFIELD_MBOX_REG_COMPLETION	0x24	/* write-0 to ack after wake (OT -> host) */
+#define ALSAQR_MBOX_REG_DOORBELL	0x20	/* write-1 to ring (host -> OT) */
+#define ALSAQR_MBOX_REG_COMPLETION	0x24	/* write-0 to ack after wake (OT -> host) */
 
 /*
  * DT compatible string this driver's platform_driver matches against, to
@@ -69,7 +69,7 @@
  * authoritative source -- so this is read dynamically rather than
  * hardcoded, in case the generated DT ever changes the source ID.
  */
-#define CARFIELD_MBOX_DT_COMPATIBLE	"opentitan_mbox-0.0"
+#define ALSAQR_MBOX_DT_COMPATIBLE	"opentitan_mbox-0.0"
 
 #ifdef __KERNEL__
 
@@ -77,43 +77,43 @@
 
 /*
  * Starts the hardware backend iff the real_mbox module param is set; a
- * no-op (returns 0) when real_mbox=0, mirroring carfield_mock_ot_start()'s
- * "no behavior change when off" contract. Call once from carfield_init(),
- * AFTER the mutual-exclusion check against mock_ot (see carfield.c) --
+ * no-op (returns 0) when real_mbox=0, mirroring alsaqr_mock_ot_start()'s
+ * "no behavior change when off" contract. Call once from alsaqr_init(),
+ * AFTER the mutual-exclusion check against mock_ot (see alsaqr.c) --
  * this function does not itself refuse to run alongside the mock, that
- * guard lives in carfield_init() where both module params are visible.
+ * guard lives in alsaqr_init() where both module params are visible.
  */
-int carfield_mbox_hw_start(void);
+int alsaqr_mbox_hw_start(void);
 
 /* Stops the backend (frees the IRQ if requested, iounmaps if mapped,
- * unregisters the platform_driver). Call from carfield_exit(). Safe to call
+ * unregisters the platform_driver). Call from alsaqr_exit(). Safe to call
  * even if start() was a no-op. */
-void carfield_mbox_hw_stop(void);
+void alsaqr_mbox_hw_stop(void);
 
 /* True iff real_mbox=1 was requested (independent of whether ioremap/IRQ
  * actually succeeded) -- used only for the mock_ot/real_mbox mutual
- * exclusion check in carfield_init(), before either backend has started. */
-bool carfield_mbox_hw_requested(void);
+ * exclusion check in alsaqr_init(), before either backend has started. */
+bool alsaqr_mbox_hw_requested(void);
 
 /* True iff the hardware backend is both requested AND actually ready to
  * send (ioremap succeeded AND the DT-matched IRQ was obtained/requested).
  * The ioctl uses this to decide which backend to dispatch to, and to fail
  * with -ENODEV instead of calling send() against an unmapped region. */
-bool carfield_mbox_hw_enabled(void);
+bool alsaqr_mbox_hw_enabled(void);
 
 /*
  * Backend seam (MOCK_OT_SPEC.md §2.4), hardware version of
- * carfield_mock_ot_send()/_wait_completion()/_read_reply(). Same
- * signatures, so the ioctl caller in carfield.c only needs to pick which
+ * alsaqr_mock_ot_send()/_wait_completion()/_read_reply(). Same
+ * signatures, so the ioctl caller in alsaqr.c only needs to pick which
  * set of three functions to call, not restructure its flow.
  *
  * send(): host -> OT doorbell. wait_completion()/read_reply() observe the
  * single OT -> host completion signal.
  */
-void carfield_mbox_hw_send(u32 header_phys, u32 cmd);
-int carfield_mbox_hw_wait_completion(long timeout_ms);
-void carfield_mbox_hw_read_reply(u32 *letter0, u32 *letter1);
+void alsaqr_mbox_hw_send(u32 header_phys, u32 cmd);
+int alsaqr_mbox_hw_wait_completion(long timeout_ms);
+void alsaqr_mbox_hw_read_reply(u32 *letter0, u32 *letter1);
 
 #endif /* __KERNEL__ */
 
-#endif /* CARFIELD_MBOX_HW_H */
+#endif /* ALSAQR_MBOX_HW_H */
